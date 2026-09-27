@@ -1,0 +1,27 @@
+[
+  {
+    "apiVersion": "v1",
+    "kind": "Pod",
+    "metadata": {
+      "name": "payout-step",
+      "namespace": "payments-bch",
+      "labels": { "workflows.argoproj.io/workflow": "payout-latest" }
+    },
+    "spec": { "containers": [{ "name": "main", "image": "registry.example.test/payments/payout:v3" }] },
+    "status": {
+      "phase": "Running",
+      "containerStatuses": [{ "name": "main", "state": { "running": { "startedAt": "2026-09-27T11:01:20Z" } } }]
+    }
+  },
+  {
+    "apiVersion": "v1",
+    "kind": "Pod",
+    "metadata": {
+      "name": "unrelated-pod",
+      "namespace": "payments-bch",
+      "labels": { "workflows.argoproj.io/workflow": "other-workflow" }
+    },
+    "spec": { "containers": [{ "name": "main", "image": "busybox:1.36" }] },
+    "status": { "phase": "Succeeded" }
+  }
+]

@@ -1,0 +1,6 @@
+{
+  "payments-bch": { "serving": ["BCH"], "team": "payments" },
+  "retail-bch": { "serving": ["bch", "OTHER"], "team": "retail" },
+  "platform-tools": { "serving": ["OTHER"], "team": "platform" },
+  "unclassified": { "team": "ops" }
+}

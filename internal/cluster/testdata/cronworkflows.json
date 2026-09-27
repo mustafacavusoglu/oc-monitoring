@@ -1,0 +1,25 @@
+[
+  {
+    "apiVersion": "argoproj.io/v1alpha1",
+    "kind": "CronWorkflow",
+    "metadata": {
+      "name": "payout-batch",
+      "namespace": "payments-bch",
+      "creationTimestamp": "2026-09-01T00:00:00Z"
+    },
+    "spec": {
+      "schedule": "30 14 * * *",
+      "timezone": "Europe/Istanbul",
+      "workflowSpec": {
+        "templates": [
+          { "name": "run", "container": { "image": "registry.example.test/payments/payout:v3" } },
+          { "name": "bad-image", "script": { "image": "" } }
+        ]
+      }
+    },
+    "status": {
+      "active": [{ "name": "payout-batch-abcde" }],
+      "lastScheduledTime": "2026-09-27T11:00:00Z"
+    }
+  }
+]

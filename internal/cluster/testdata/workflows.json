@@ -1,0 +1,31 @@
+[
+  {
+    "apiVersion": "argoproj.io/v1alpha1",
+    "kind": "Workflow",
+    "metadata": {
+      "name": "payout-older",
+      "namespace": "payments-bch",
+      "creationTimestamp": "2026-09-27T11:30:00Z",
+      "labels": { "workflows.argoproj.io/cron-workflow": "payout-batch" },
+      "annotations": { "workflows.argoproj.io/scheduled-time": "2026-09-27T10:00:00Z" }
+    },
+    "spec": { "templates": [{ "name": "run", "container": { "image": "registry.example.test/payments/payout:v2" } }] },
+    "status": { "phase": "Failed" }
+  },
+  {
+    "apiVersion": "argoproj.io/v1alpha1",
+    "kind": "Workflow",
+    "metadata": {
+      "name": "payout-latest",
+      "namespace": "payments-bch",
+      "creationTimestamp": "2026-09-27T10:30:00Z",
+      "labels": { "workflows.argoproj.io/cron-workflow": "payout-batch" },
+      "annotations": { "workflows.argoproj.io/scheduled-time": "2026-09-27T11:00:00Z" }
+    },
+    "spec": { "templates": [{ "name": "run", "container": { "image": "registry.example.test/payments/payout:v3" } }] },
+    "status": {
+      "phase": "Running",
+      "startedAt": "2026-09-27T11:01:00Z"
+    }
+  }
+]

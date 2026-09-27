@@ -1,0 +1,6 @@
+.git
+.superpowers
+.worktrees
+node_modules
+web/node_modules
+web/dist
