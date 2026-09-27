@@ -1,258 +1,229 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import { fetchDashboard } from './api'
-import type { CronWorkflow, DashboardResponse, ImageResult, SourceHealth } from './types'
+import type { CronWorkflow, DashboardResponse, ImageResult, Pod, SourceHealth } from './types'
 
-type Filter = 'all' | string
+type Theme = 'light' | 'dark'
 
 function formatDate(value?: string) {
   if (!value) return '—'
   const date = new Date(value)
-  return Number.isNaN(date.getTime())
-    ? '—'
-    : new Intl.DateTimeFormat('tr-TR', { dateStyle: 'medium', timeStyle: 'short' }).format(date)
+  return Number.isNaN(date.getTime()) ? value : new Intl.DateTimeFormat('tr-TR', { dateStyle: 'short', timeStyle: 'short' }).format(date)
 }
 
-function stateLabel(value?: string) {
-  if (!value) return 'Unavailable'
-  return value
+function label(value?: string) {
+  const normalized = (value || 'Unavailable').toLowerCase()
+  const labels: Record<string, string> = {
+    succeeded: 'Başarılı', failed: 'Başarısız', error: 'Hata', running: 'Çalışıyor', pending: 'Bekliyor',
+    unavailable: 'Veri yok', present: 'Mevcut', missing: 'Bulunamadı', unknown: 'Bilinmiyor',
+    suspended: 'Askıda', active: 'Aktif', ready: 'Hazır', syncing: 'Senkronize ediliyor', degraded: 'Sorun var',
+  }
+  return labels[normalized] || value || 'Veri yok'
 }
 
-function StatePill({ value }: { value: string }) {
-  const normalized = value.toLowerCase().replace(/[^a-z0-9]+/g, '-')
-  return <span className={`pill pill-${normalized}`}>{value}</span>
+function StatePill({ value }: { value?: string }) {
+  const key = (value || 'unavailable').toLowerCase().replace(/[^a-z0-9]+/g, '-')
+  return <span className={`pill pill-${key}`}>{label(value)}</span>
 }
 
-function SourceCard({ name, source }: { name: string; source: SourceHealth }) {
-  const state = source.state || 'unknown'
-  return (
-    <div className="source-card">
-      <span className={`source-dot source-${state}`} />
-      <div>
-        <div className="source-name">{name}</div>
-        <div className="source-detail">
-          {state === 'ready' ? 'Healthy' : state}
-          {source.lastSuccess ? ` · updated ${formatDate(source.lastSuccess)}` : ''}
-          {source.error ? ` · ${source.error}` : ''}
-        </div>
-      </div>
-    </div>
-  )
+function SourceStatus({ name, source }: { name: string; source: SourceHealth }) {
+  return <span className="source-status" title={source.error || `Son başarılı güncelleme: ${formatDate(source.lastSuccess)}`}>
+    <span className={`source-dot source-${source.state.toLowerCase()}`} />{name}: {label(source.state)}
+  </span>
 }
 
-function ImageList({ images }: { images: ImageResult[] }) {
-  if (!images.length) return <span className="muted">No image reference</span>
-  return (
-    <div className="image-list">
-      {images.map((image) => (
-        <div className="image-line" key={image.reference} title={image.error || image.reference}>
-          <code>{image.reference}</code>
-          <StatePill value={image.status} />
-        </div>
-      ))}
-    </div>
-  )
+function PodDetails({ pod }: { pod: Pod }) {
+  return <div className="pod-row">
+    <div><strong>{pod.name}</strong>{pod.containerStates?.length ? <small>{pod.containerStates.join(' · ')}</small> : null}</div>
+    <StatePill value={pod.phase} />
+  </div>
 }
 
-function WorkflowCard({ workflow }: { workflow: CronWorkflow }) {
-  const phase = workflow.lastRun?.phase || 'Unavailable'
-  const schedule = workflow.schedules.length ? workflow.schedules.join('\n') : 'No schedule'
-  const podCount = workflow.lastRun?.pods.length ?? 0
-  return (
-    <article className="workflow-card">
-      <div className="workflow-heading">
-        <div>
-          <div className="namespace-label">{workflow.namespace}</div>
-          <h2>{workflow.name}</h2>
-        </div>
-        <div className="heading-pills">
-          <StatePill value={workflow.suspended ? 'Suspended' : workflow.active ? 'Active' : 'Enabled'} />
-          <StatePill value={stateLabel(phase)} />
-        </div>
-      </div>
-
-      <div className="workflow-grid">
-        <section className="detail-block">
-          <div className="detail-label">Schedule <span>{workflow.timezone || 'UTC'}</span></div>
-          <pre>{schedule}</pre>
-          {workflow.scheduleError && <div className="inline-warning">{workflow.scheduleError}</div>}
-        </section>
-        <section className="detail-block">
-          <div className="detail-label">Next scheduled time</div>
-          <div className="detail-value">{workflow.suspended ? 'Suspended' : formatDate(workflow.nextScheduledAt)}</div>
-        </section>
-        <section className="detail-block">
-          <div className="detail-label">Last scheduled time</div>
-          <div className="detail-value">{formatDate(workflow.lastScheduledAt)}</div>
-        </section>
-        <section className="detail-block">
-          <div className="detail-label">Last run</div>
-          {workflow.lastRun ? (
-            <>
-              <div className="detail-value">{formatDate(workflow.lastRun.scheduledAt || workflow.lastRun.createdAt)}</div>
-              <div className="detail-subtle">{workflow.lastRun.name}</div>
-            </>
-          ) : <div className="detail-value muted">No retained run</div>}
-        </section>
-      </div>
-
-      <div className="workflow-lower">
-        <section className="lower-block">
-          <div className="detail-label">Related pods <span>{podCount}</span></div>
-          {podCount ? (
-            <div className="pod-list">
-              {workflow.lastRun?.pods.map((pod) => (
-                <div className="pod-line" key={pod.name}>
-                  <div><strong>{pod.name}</strong>{pod.containerStates?.length ? <small>{pod.containerStates.join(' · ')}</small> : null}</div>
-                  <StatePill value={pod.phase || 'Unknown'} />
-                </div>
-              ))}
-            </div>
-          ) : <div className="muted">No pod data for the last run</div>}
-        </section>
-        <section className="lower-block image-block">
-          <div className="detail-label">Image status <span>{workflow.images.length}</span></div>
-          <ImageList images={workflow.images} />
-        </section>
-      </div>
-    </article>
-  )
+function ImageDetails({ image }: { image: ImageResult }) {
+  return <div className="image-row">
+    <code title={image.reference}>{image.reference}</code>
+    <div><StatePill value={image.status} />{image.error ? <small className="detail-error">{image.error}</small> : null}</div>
+  </div>
 }
 
-function matchesStatus(workflow: CronWorkflow, selected: Filter) {
-  if (selected === 'all') return true
-  return (workflow.lastRun?.phase || 'Unavailable').toLowerCase() === selected.toLowerCase()
+function WorkflowDetails({ workflow }: { workflow: CronWorkflow }) {
+  return <div className="details-grid">
+    <section className="detail-section">
+      <h3>Zamanlama</h3>
+      <dl>
+        <div><dt>Schedule</dt><dd>{workflow.schedules.length ? workflow.schedules.join(' · ') : '—'}</dd></div>
+        <div><dt>Saat dilimi</dt><dd>{workflow.timezone || '—'}</dd></div>
+        <div><dt>Son tetiklenme</dt><dd>{formatDate(workflow.lastScheduledAt)}</dd></div>
+        {workflow.scheduleError ? <div><dt>Zamanlama hatası</dt><dd className="detail-error">{workflow.scheduleError}</dd></div> : null}
+      </dl>
+    </section>
+    <section className="detail-section">
+      <h3>Son Workflow</h3>
+      {workflow.lastRun ? <>
+        <dl>
+          <div><dt>Ad</dt><dd>{workflow.lastRun.name}</dd></div>
+          <div><dt>Başlangıç</dt><dd>{formatDate(workflow.lastRun.startedAt || workflow.lastRun.createdAt)}</dd></div>
+          <div><dt>Bitiş</dt><dd>{formatDate(workflow.lastRun.finishedAt)}</dd></div>
+        </dl>
+        <h4>Pod’lar ({workflow.lastRun.pods.length})</h4>
+        {workflow.lastRun.pods.length ? workflow.lastRun.pods.map((pod) => <PodDetails key={pod.name} pod={pod} />) : <p className="muted">Pod bulunamadı.</p>}
+      </> : <p className="muted">Henüz workflow çalışmamış.</p>}
+    </section>
+    <section className="detail-section detail-images">
+      <h3>Image’lar ({workflow.images.length})</h3>
+      {workflow.images.length ? workflow.images.map((image) => <ImageDetails key={image.reference} image={image} />) : <p className="muted">Image bilgisi bulunamadı.</p>}
+    </section>
+  </div>
 }
 
-function matchesImage(workflow: CronWorkflow, selected: Filter) {
-  if (selected === 'all') return true
-  return workflow.images.some((image) => image.status === selected)
+function matchesRun(workflow: CronWorkflow, filter: string) {
+  if (filter === 'all') return true
+  const phase = (workflow.lastRun?.phase || 'unavailable').toLowerCase()
+  if (filter === 'failed') return phase === 'failed' || phase === 'error'
+  if (filter === 'running') return workflow.active || phase === 'running'
+  return phase === filter
 }
 
 export default function App() {
   const [dashboard, setDashboard] = useState<DashboardResponse | null>(null)
   const [loading, setLoading] = useState(true)
   const [refreshing, setRefreshing] = useState(false)
-  const [requestError, setRequestError] = useState('')
-  const [namespace, setNamespace] = useState<Filter>('all')
-  const [workflowStatus, setWorkflowStatus] = useState<Filter>('all')
-  const [imageStatus, setImageStatus] = useState<Filter>('all')
+  const [error, setError] = useState('')
+  const [namespace, setNamespace] = useState('all')
+  const [runFilter, setRunFilter] = useState('all')
+  const [imageFilter, setImageFilter] = useState('all')
+  const [expanded, setExpanded] = useState<string | null>(null)
+  const [theme, setTheme] = useState<Theme>(() => {
+    try { return localStorage.getItem('cron-dashboard-theme') === 'dark' ? 'dark' : 'light' } catch { return 'light' }
+  })
 
   useEffect(() => {
-    let active = true
-    let busy = false
-    let controller: AbortController | undefined
-    const load = async () => {
-      if (busy) return
-      busy = true
-      controller = new AbortController()
-      setRefreshing(true)
-      try {
-        const response = await fetchDashboard(controller.signal)
-        if (!active) return
-        setDashboard(response)
-        setRequestError('')
-      } catch (error) {
-        if (active && !(error instanceof DOMException && error.name === 'AbortError')) {
-          setRequestError(error instanceof Error ? error.message : 'Dashboard verisi alınamadı')
-        }
-      } finally {
-        busy = false
-        if (active) {
-          setLoading(false)
-          setRefreshing(false)
-        }
-      }
-    }
-    void load()
-    const timer = window.setInterval(() => void load(), 30_000)
-    return () => {
-      active = false
-      window.clearInterval(timer)
-      controller?.abort()
+    document.documentElement.dataset.theme = theme
+    try { localStorage.setItem('cron-dashboard-theme', theme) } catch { /* Storage may be disabled. */ }
+  }, [theme])
+
+  const refresh = useCallback(async () => {
+    setRefreshing(true)
+    const controller = new AbortController()
+    try {
+      const data = await fetchDashboard(controller.signal)
+      setDashboard(data)
+      setError('')
+    } catch (cause) {
+      if (!(cause instanceof DOMException && cause.name === 'AbortError')) setError(cause instanceof Error ? cause.message : 'Dashboard verisi alınamadı.')
+    } finally {
+      setLoading(false)
+      setRefreshing(false)
     }
   }, [])
 
-  const workflows = dashboard?.cronWorkflows ?? []
-  const visibleWorkflows = useMemo(() => workflows.filter((workflow) =>
-    (namespace === 'all' || workflow.namespace === namespace)
-    && matchesStatus(workflow, workflowStatus)
-    && matchesImage(workflow, imageStatus),
-  ), [workflows, namespace, workflowStatus, imageStatus])
-  const failedCount = workflows.filter((workflow) => ['failed', 'error'].includes((workflow.lastRun?.phase || '').toLowerCase())).length
-  const missingImages = workflows.reduce((count, workflow) => count + workflow.images.filter((image) => image.status === 'missing').length, 0)
+  useEffect(() => {
+    const controller = new AbortController()
+    let active = true
+    fetchDashboard(controller.signal).then((data) => {
+      if (active) { setDashboard(data); setError('') }
+    }).catch((cause: unknown) => {
+      if (active && !(cause instanceof DOMException && cause.name === 'AbortError')) setError(cause instanceof Error ? cause.message : 'Dashboard verisi alınamadı.')
+    }).finally(() => { if (active) { setLoading(false); setRefreshing(false) } })
+    const interval = window.setInterval(() => { void refresh() }, 30_000)
+    return () => { active = false; controller.abort(); window.clearInterval(interval) }
+  }, [refresh])
 
-  return (
-    <main className="shell">
-      <header className="page-header">
-        <div className="topline"><span className="brand-mark">A</span> PLATFORM OPERATIONS <span className="live-indicator"><i /> LIVE</span></div>
-        <div className="header-row">
-          <div>
-            <h1>Workflow Monitor</h1>
-            <p>OpenShift üzerinde çalışan BCH CronWorkflow kaynaklarının çalışma ve image sağlığı.</p>
-          </div>
-          <div className="updated-card">
-            <span>{refreshing ? 'Refreshing' : 'Last update'}</span>
-            <strong>{dashboard ? formatDate(dashboard.generatedAt) : 'Waiting for data'}</strong>
-          </div>
-        </div>
-      </header>
+  const workflows = dashboard?.cronWorkflows || []
+  const summary = useMemo(() => ({
+    total: workflows.length,
+    running: workflows.filter((item) => item.active || item.lastRun?.phase.toLowerCase() === 'running').length,
+    failed: workflows.filter((item) => ['failed', 'error'].includes(item.lastRun?.phase.toLowerCase() || '')).length,
+    missing: workflows.filter((item) => item.images.some((image) => image.status.toLowerCase() === 'missing')).length,
+  }), [workflows])
+  const visibleWorkflows = useMemo(() => workflows.filter((item) =>
+    (namespace === 'all' || item.namespace === namespace) && matchesRun(item, runFilter) &&
+    (imageFilter === 'all' || item.images.some((image) => image.status.toLowerCase() === imageFilter))),
+  [workflows, namespace, runFilter, imageFilter])
 
-      {requestError && <div className="banner banner-error">Dashboard verisi alınamadı: {requestError}</div>}
+  const applySummaryFilter = (filter: 'all' | 'running' | 'failed' | 'missing') => {
+    setNamespace('all')
+    setRunFilter(filter === 'missing' ? 'all' : filter)
+    setImageFilter(filter === 'missing' ? 'missing' : 'all')
+    setExpanded(null)
+  }
 
-      <section className="source-strip" aria-label="Source health">
-        <SourceCard name="Azure project source" source={dashboard?.projectSource ?? { state: 'syncing' }} />
-        <SourceCard name="OpenShift cluster" source={dashboard?.clusterSource ?? { state: 'syncing' }} />
-        <SourceCard name="Container registry" source={dashboard?.registrySource ?? { state: 'syncing' }} />
+  return <main className="app-shell">
+    <header className="page-header">
+      <div><p className="eyebrow">OPENSHIFT · ARGO WORKFLOWS</p><h1>CronWorkflow izleme</h1></div>
+      <div className="header-actions">
+        <span className="updated-at">{dashboard ? `Güncelleme: ${formatDate(dashboard.generatedAt)}` : 'Canlı durum'}</span>
+        <button className="button button-secondary theme-toggle" onClick={() => setTheme(theme === 'light' ? 'dark' : 'light')} aria-label={theme === 'light' ? 'Koyu temaya geç' : 'Açık temaya geç'}>
+          {theme === 'light' ? '☾ Koyu' : '☀ Açık'}
+        </button>
+        <button className="button button-secondary refresh-button" onClick={() => void refresh()} disabled={refreshing}>{refreshing ? 'Yenileniyor…' : 'Yenile'}</button>
+      </div>
+    </header>
+
+    {dashboard ? <div className="source-line" aria-label="Veri kaynakları">
+      <SourceStatus name="Projeler" source={dashboard.projectSource} />
+      <SourceStatus name="OpenShift" source={dashboard.clusterSource} />
+      <SourceStatus name="Registry" source={dashboard.registrySource} />
+    </div> : null}
+
+    {error ? <div className="notice notice-error" role="alert">Veri yenilenemedi: {error}{dashboard ? ' · Önceki veriler gösteriliyor.' : ''}</div> : null}
+    {loading && !dashboard ? <div className="empty-state">CronWorkflow verileri yükleniyor…</div> : null}
+
+    {dashboard ? <>
+      <section className="summary-grid" aria-label="Özet">
+        <button className={`summary-card ${runFilter === 'all' && imageFilter === 'all' ? 'selected' : ''}`} onClick={() => applySummaryFilter('all')}>
+          <span>CronWorkflow</span><strong>{summary.total}</strong>
+        </button>
+        <button className={`summary-card ${runFilter === 'running' ? 'selected' : ''}`} onClick={() => applySummaryFilter('running')}>
+          <span>Çalışan</span><strong>{summary.running}</strong>
+        </button>
+        <button className={`summary-card ${runFilter === 'failed' ? 'selected' : ''}`} onClick={() => applySummaryFilter('failed')}>
+          <span>Başarısız son çalışma</span><strong>{summary.failed}</strong>
+        </button>
+        <button className={`summary-card ${imageFilter === 'missing' ? 'selected' : ''}`} onClick={() => applySummaryFilter('missing')}>
+          <span>Eksik image</span><strong>{summary.missing}</strong>
+        </button>
       </section>
 
-      <section className="summary-grid" aria-label="Summary">
-        <div className="summary-card"><span>CRONWORKFLOWS</span><strong>{workflows.length}</strong><small>Monitored BCH namespaces</small></div>
-        <div className="summary-card"><span>ACTIVE RUNS</span><strong>{workflows.filter((workflow) => workflow.active).length}</strong><small>Currently active CronWorkflows</small></div>
-        <div className="summary-card"><span>FAILED LAST RUNS</span><strong className={failedCount ? 'value-danger' : ''}>{failedCount}</strong><small>Failed or errored latest runs</small></div>
-        <div className="summary-card"><span>MISSING IMAGES</span><strong className={missingImages ? 'value-danger' : ''}>{missingImages}</strong><small>Registry returned not found</small></div>
-      </section>
-
-      <section className="list-section">
-        <div className="list-header">
-          <div><div className="eyebrow">MONITORING</div><h2>CronWorkflows <span>{visibleWorkflows.length}</span></h2></div>
+      <section className="workflows-section">
+        <div className="section-heading"><div><h2>CronWorkflow’lar</h2><span>{visibleWorkflows.length} kayıt</span></div>
           <div className="filters">
-            <label>Namespace
-              <select value={namespace} onChange={(event) => setNamespace(event.target.value)}>
-                <option value="all">All namespaces</option>
-                {dashboard?.namespaces.map((item) => <option value={item} key={item}>{item}</option>)}
-              </select>
-            </label>
-            <label>Workflow status
-              <select value={workflowStatus} onChange={(event) => setWorkflowStatus(event.target.value)}>
-                <option value="all">All statuses</option>
-                <option value="succeeded">Succeeded</option>
-                <option value="failed">Failed</option>
-                <option value="error">Error</option>
-                <option value="running">Running</option>
-                <option value="pending">Pending</option>
-                <option value="unavailable">Unavailable</option>
-              </select>
-            </label>
-            <label>Image status
-              <select value={imageStatus} onChange={(event) => setImageStatus(event.target.value)}>
-                <option value="all">All image statuses</option>
-                <option value="present">Present</option>
-                <option value="missing">Missing</option>
-                <option value="unknown">Unknown</option>
-              </select>
-            </label>
+            <label>Namespace <select value={namespace} onChange={(event) => setNamespace(event.target.value)}>
+              <option value="all">Tüm namespace’ler</option>{dashboard.namespaces.map((item) => <option key={item} value={item}>{item}</option>)}
+            </select></label>
+            <label>Son çalışma <select value={runFilter} onChange={(event) => setRunFilter(event.target.value)}>
+              <option value="all">Tümü</option><option value="running">Çalışıyor</option><option value="succeeded">Başarılı</option><option value="failed">Başarısız / hata</option><option value="pending">Bekliyor</option><option value="unavailable">Veri yok</option>
+            </select></label>
+            <label>Image <select value={imageFilter} onChange={(event) => setImageFilter(event.target.value)}>
+              <option value="all">Tümü</option><option value="present">Mevcut</option><option value="missing">Bulunamadı</option><option value="unknown">Bilinmiyor</option>
+            </select></label>
           </div>
         </div>
-
-        {loading ? (
-          <div className="empty-state"><div className="spinner" /><strong>Loading workflow state</strong><span>Project ve cluster verisi bekleniyor.</span></div>
-        ) : visibleWorkflows.length ? (
-          <div className="workflow-list">{visibleWorkflows.map((workflow) => <WorkflowCard workflow={workflow} key={`${workflow.namespace}/${workflow.name}`} />)}</div>
-        ) : (
-          <div className="empty-state"><strong>{workflows.length ? 'No workflows match these filters' : 'No CronWorkflows found'}</strong><span>{workflows.length ? 'Filtreleri değiştirerek tekrar deneyin.' : 'Azure project kaynağı BCH namespace’lerini bulduğunda workflowlar burada görünür.'}</span></div>
-        )}
-        <div className="refresh-note">Data refreshes automatically every 30 seconds</div>
+        <div className="table-wrap"><table>
+          <thead><tr><th>CronWorkflow</th><th>Durum</th><th>Son çalışma</th><th>Son çalışma zamanı</th><th>Sonraki zamanlama</th><th></th></tr></thead>
+          <tbody>{visibleWorkflows.map((workflow) => {
+            const key = `${workflow.namespace}/${workflow.name}`
+            const isExpanded = expanded === key
+            const phase = workflow.lastRun?.phase || (workflow.active ? 'Running' : 'Unavailable')
+            return <FragmentRow key={key} workflow={workflow} phase={phase} isExpanded={isExpanded} onToggle={() => setExpanded(isExpanded ? null : key)} />
+          })}
+          {!visibleWorkflows.length ? <tr><td className="no-results" colSpan={6}>Bu filtrelerle eşleşen CronWorkflow yok.</td></tr> : null}</tbody>
+        </table></div>
       </section>
-    </main>
-  )
+    </> : null}
+    <footer className="page-footer">30 saniyede bir otomatik güncellenir{refreshing ? ' · Güncelleniyor' : ''}</footer>
+  </main>
+}
+
+function FragmentRow({ workflow, phase, isExpanded, onToggle }: { workflow: CronWorkflow; phase: string; isExpanded: boolean; onToggle: () => void }) {
+  return <>
+    <tr className={isExpanded ? 'workflow-row expanded' : 'workflow-row'}>
+      <td><strong>{workflow.name}</strong><small>{workflow.namespace}</small></td>
+      <td><div className="row-status"><StatePill value={phase} />{workflow.suspended ? <span className="suspended-label">Askıda</span> : null}</div></td>
+      <td>{workflow.lastRun?.name || '—'}</td>
+      <td>{formatDate(workflow.lastRun?.startedAt || workflow.lastRun?.createdAt || workflow.lastScheduledAt)}</td>
+      <td>{formatDate(workflow.nextScheduledAt)}</td>
+      <td><button className="button button-link" aria-expanded={isExpanded} onClick={onToggle}>{isExpanded ? 'Kapat' : 'Detay'}</button></td>
+    </tr>
+    {isExpanded ? <tr className="details-row"><td colSpan={6}><WorkflowDetails workflow={workflow} /></td></tr> : null}
+  </>
 }
