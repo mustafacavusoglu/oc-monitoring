@@ -11,17 +11,21 @@ import (
 	"strings"
 	"time"
 
+	"sigs.k8s.io/yaml"
+
 	"monitor/internal/config"
 )
 
 const maxProjectFileSize = 4 << 20
 
 type azureClient struct {
-	repoURL  string
-	branch   string
-	filePath string
-	token    string
-	http     *http.Client
+	repoURL   string
+	baseURL   string
+	branch    string
+	filePath  string
+	token     string
+	tokenFile string
+	http      *http.Client
 }
 
 func newAzureClient(cfg config.Config, client *http.Client) *azureClient {
@@ -29,11 +33,13 @@ func newAzureClient(cfg config.Config, client *http.Client) *azureClient {
 		client = &http.Client{Timeout: 10 * time.Second}
 	}
 	return &azureClient{
-		repoURL:  cfg.AzureRepoURL,
-		branch:   cfg.AzureRepoBranch,
-		filePath: cfg.AzureProjectsPath,
-		token:    cfg.AzureTokenFile,
-		http:     client,
+		baseURL:   cfg.AzureBaseURL,
+		repoURL:   cfg.AzureRepoURL,
+		branch:    cfg.AzureRepoBranch,
+		filePath:  cfg.AzureProjectsPath,
+		token:     cfg.AzureToken,
+		tokenFile: cfg.AzureTokenFile,
+		http:      client,
 	}
 }
 
@@ -49,12 +55,8 @@ func (c *azureClient) projects(ctx context.Context) (map[string]json.RawMessage,
 		return nil, fmt.Errorf("create Azure Repos request: %w", err)
 	}
 	req.Header.Set("Accept", "application/octet-stream")
-	if c.token != "" {
-		token, err := readToken(c.token)
-		if err != nil {
-			return nil, err
-		}
-		req.SetBasicAuth("", token)
+	if err := c.authorize(req); err != nil {
+		return nil, err
 	}
 
 	resp, err := c.http.Do(req)
@@ -83,6 +85,66 @@ func (c *azureClient) projects(ctx context.Context) (map[string]json.RawMessage,
 		return nil, fmt.Errorf("project JSON must be a top-level object")
 	}
 	return projects, nil
+}
+
+func (c *azureClient) projectImageID(ctx context.Context, project string) (string, error) {
+	requestURL, err := url.JoinPath(c.baseURL, project, "Projects", "MainProjects", "values.yaml")
+	if err != nil {
+		return "", fmt.Errorf("build project values URL: %w", err)
+	}
+	requestCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	defer cancel()
+	req, err := http.NewRequestWithContext(requestCtx, http.MethodGet, requestURL, nil)
+	if err != nil {
+		return "", fmt.Errorf("create Azure values request: %w", err)
+	}
+	if err := c.authorize(req); err != nil {
+		return "", err
+	}
+	resp, err := c.http.Do(req)
+	if err != nil {
+		return "", fmt.Errorf("fetch project values from Azure: %w", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return "", fmt.Errorf("fetch project values from Azure: HTTP %d", resp.StatusCode)
+	}
+	body, err := io.ReadAll(io.LimitReader(resp.Body, maxProjectFileSize+1))
+	if err != nil {
+		return "", fmt.Errorf("read project values from Azure: %w", err)
+	}
+	if len(body) > maxProjectFileSize {
+		return "", fmt.Errorf("project values exceed %d bytes", maxProjectFileSize)
+	}
+	var values struct {
+		BatchDeploys struct {
+			ImageID string `json:"imageId"`
+		} `json:"batchDeploys"`
+	}
+	if err := yaml.Unmarshal(body, &values); err != nil {
+		return "", fmt.Errorf("parse project values YAML: %w", err)
+	}
+	imageID := strings.TrimSpace(values.BatchDeploys.ImageID)
+	if imageID == "" {
+		return "", fmt.Errorf("batchDeploys.imageId is empty")
+	}
+	return imageID, nil
+}
+
+func (c *azureClient) authorize(req *http.Request) error {
+	if c.token == "" && c.tokenFile == "" {
+		return nil
+	}
+	token := c.token
+	if token == "" {
+		var err error
+		token, err = readToken(c.tokenFile)
+		if err != nil {
+			return err
+		}
+	}
+	req.SetBasicAuth("", token)
+	return nil
 }
 
 func readToken(file string) (string, error) {

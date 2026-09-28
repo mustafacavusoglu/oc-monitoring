@@ -32,7 +32,7 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
-	imageChecker, err := registry.NewChecker(cfg.RegistryAuthFile, cfg.ImageCacheTTL, cfg.RegistryCheckConcurrency)
+	imageChecker, err := registry.NewChecker(cfg.NexusURL, cfg.ImageCacheTTL, cfg.RegistryCheckConcurrency)
 	if err != nil {
 		log.Fatal(err)
 	}

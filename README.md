@@ -1,6 +1,6 @@
 # OpenShift Argo CronWorkflow Dashboard
 
-OpenShift içinde çalışan bu servis, Azure Repos’taki `project.json` dosyasından `serving` listesinde `BCH` olan namespace’leri seçer. Argo `CronWorkflow` ve `Workflow` kaynaklarını, bu workflow’lara bağlı pod’ları informer cache üzerinden izler. React arayüzü son çalışmayı, pod durumlarını, cron zamanını ve container image’larının registry’de bulunup bulunmadığını gösterir.
+OpenShift içinde çalışan servis, Azure Repos’taki proje JSON’unda `serving` listesinde `BCH` olan key’leri namespace/proje adı olarak kullanır. Her key için `Projects/MainProjects/values.yaml` dosyasındaki `batchDeploys.imageId` değerini okur ve `NEXUS_URL/{imageId}` adresine GET atar. Yalnızca HTTP 200 image’ı mevcut gösterir; diğer HTTP durumları mevcut değil olarak gösterilir. Argo `CronWorkflow` ve `Workflow` kaynaklarıyla ilişkili pod’lar informer cache üzerinden izlenir.
 
 ## Geliştirme ve container oluşturma
 
@@ -26,7 +26,9 @@ Container, `:8080` portunda API ve arayüzü aynı origin üzerinden sunar. `/he
 
 ## OpenShift kurulumu
 
-`deploy/openshift.yaml` içindeki Azure URL, branch ve dosya yolunu düzenleyin. Namespace varsayılanı `workflow-monitoring`; kurumunuzun namespace’ine göre dosyanın tamamında aynı değeri kullanın. Image satırını kullandığınız registry ve tag’e göre değiştirin.
+`deploy/openshift.yaml` içindeki `cronworkflow-dashboard-config` ConfigMap’ini kurumunuzun değerleriyle güncelleyin. `AZURE_BASE_URL` sonuna namespace key ve `/Projects/MainProjects/values.yaml` eklenerek values dosyasına GET atılır. `AZURE_REPO_URL`, branch ve path proje JSON’unu almak içindir. `NEXUS_URL` image ID’nin ekleneceği temel URL’dir. Diğer servis ayarları da ConfigMap’ten `envFrom` ile alınır. Namespace varsayılanı `workflow-monitoring`.
+
+Image `monitor:0.0.1` etiketini kullanır. OrbStack’in yerel Kubernetes kümesi bu image’ı kullanacaksa aynı Docker engine’e build edin; `imagePullPolicy: IfNotPresent` yerel image’ı kullanır. Uzak kümeye kurulumda image’ı Nexus’a push edip Deployment’taki `image:` alanına tam registry image adresini yazın. Kubernetes `image:` alanı ConfigMap değerlerini genişletemediği için Nexus URL’si doğrudan buraya bağlanamaz.
 
 ```sh
 oc apply -f deploy/openshift.yaml
@@ -51,33 +53,17 @@ JSON’un kök seviyesi namespace adlarının key olduğu bir object olmalıdır
 
 ### Azure kimlik doğrulaması
 
-Repo anonim okumaya açık değilse PAT dosyasını Secret olarak ekleyip deployment’a dosya yolunu bildirin:
+Azure Repos anonim okumaya açık değilse PAT’i Secret’a ekleyin. Deployment Secret değerlerini `envFrom.secretRef` ile alır:
 
 ```sh
-oc create secret generic cronworkflow-azure-token \
-  --from-file=token=./azure-token \
-  -n workflow-monitoring
-oc set env deployment/cronworkflow-dashboard \
-  AZURE_TOKEN_FILE=/var/run/azure/token \
+oc create secret generic cronworkflow-dashboard-secrets \
+  --from-file=AZURE_TOKEN=./azure-token \
   -n workflow-monitoring
 ```
 
-PAT yalnızca pod içindeki salt okunur Secret mount’unda tutulur. Azure DevOps erişimi gerekiyorsa ilgili token’a repo içeriğini okuma yetkisi verin.
+Azure DevOps erişimi gerekiyorsa ilgili token’a repo içeriğini okuma yetkisi verin. PAT’in Secret key’i `AZURE_TOKEN` olmalıdır. Pod’a Secret’tan ortam değişkeni olarak aktarılır; loglanmaz.
 
-### Private registry erişimi
-
-Image kontrolü için registry kullanıcı bilgilerini Docker `config.json` olarak Secret’a koyun:
-
-```sh
-oc create secret generic cronworkflow-registry-auth \
-  --from-file=config.json=./config.json \
-  -n workflow-monitoring
-oc set env deployment/cronworkflow-dashboard \
-  REGISTRY_AUTH_FILE=/var/run/registry/config.json \
-  -n workflow-monitoring
-```
-
-Secret mount edildiğinde servis `DOCKER_CONFIG` değerini bu dosyanın dizinine ayarlar ve go-containerregistry varsayılan keychain’ini kullanır. Public registry’ler için bu Secret gerekli değildir. Manifest isteğinin başarılı olması `present`, HTTP 404 `missing` sonucunu verir. Yetki, ağ, timeout ve diğer hatalar `unknown` olarak gösterilir. Varsayılan image cache süresi 5 dakika, aynı anda yapılan registry kontrolü sayısı 4’tür.
+Nexus kontrolü anonim HTTP GET kullanır; bu sürümde Nexus username/password yoktur. `NEXUS_URL` ve `batchDeploys.imageId` birleştirilir. Yanıt 200 ise `present`, diğer yanıtlar `missing` durumudur. Sonuçlar varsayılan olarak 5 dakika cache’lenir; aynı anda yapılan kontroller `REGISTRY_CHECK_CONCURRENCY` ile sınırlanır.
 
 ## Kubernetes ve Argo erişimi
 
@@ -89,7 +75,7 @@ Deployment cluster içinde ServiceAccount kullanır. ClusterRole yalnızca aşa�
 
 ClusterRoleBinding bu okumayı cluster genelinde seçilen namespace’lere uygular; Kubernetes list/watch çağrıları yalnızca proje JSON’unda BCH olarak seçilen namespace’lere namespace-scoped yapılır. Argo Workflows CRD’lerinin `argoproj.io/v1alpha1` sürümü cluster’da kurulu olmalıdır. RBAC verilmeden önce manifestteki ClusterRoleBinding kapsamını platform ekibinizle doğrulayın.
 
-Servis varsayılan olarak 5 dakikada Azure project JSON’u yeniler ve image sonuçlarını 5 dakika cache’ler. Değerler `PROJECT_REFRESH_INTERVAL`, `IMAGE_CACHE_TTL` ve `REGISTRY_CHECK_CONCURRENCY` environment değişkenleriyle değiştirilebilir. Arayüz API’yi 30 saniyede yeniler. Kubernetes okumaları her tarayıcı isteğinde tekrarlanmaz; informer cache’den sunulur.
+Servis varsayılan olarak 5 dakikada Azure project JSON’u ve namespace values dosyalarını yeniler; Nexus image sonuçlarını 5 dakika cache’ler. Arayüz API’yi 30 saniyede yeniler. Kubernetes okumaları her tarayıcı isteğinde tekrarlanmaz; informer cache’den sunulur.
 
 ## Ağ erişimi
 

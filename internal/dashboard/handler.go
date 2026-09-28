@@ -52,30 +52,26 @@ func (h *Handler) snapshot(ctx context.Context) model.DashboardResponse {
 	clusterSnapshot := h.clusterSnapshot()
 	views := cluster.BuildViews(clusterSnapshot, now)
 	images := make([]string, 0)
-	for _, workflow := range views {
-		for _, image := range workflow.Images {
-			images = append(images, image.Reference)
-		}
+	for _, imageID := range projectSnapshot.ImageIDs {
+		images = append(images, imageID)
 	}
 	imageResults := h.checkImages(ctx, images)
 	registryHealth := model.SourceHealth{State: "ready"}
 	unknownImages := 0
 	seenUnknown := make(map[string]struct{})
 	for i := range views {
-		for j := range views[i].Images {
-			if result, found := imageResults[views[i].Images[j].Reference]; found {
-				views[i].Images[j] = result
-				if result.Status == "unknown" {
-					if result.CheckedAt != nil && result.Error != "lookup cancelled" {
-						if _, seen := seenUnknown[result.Reference]; !seen {
-							seenUnknown[result.Reference] = struct{}{}
-							unknownImages++
-						}
-					}
-				} else if result.CheckedAt != nil && (registryHealth.LastSuccess == nil || result.CheckedAt.After(*registryHealth.LastSuccess)) {
-					checkedAt := *result.CheckedAt
-					registryHealth.LastSuccess = &checkedAt
+		views[i].Images = nil
+		imageID := projectSnapshot.ImageIDs[views[i].Namespace]
+		if result, found := imageResults[imageID]; found {
+			views[i].Images = []model.ImageResult{result}
+			if result.Status == "unknown" {
+				if _, seen := seenUnknown[result.Reference]; !seen {
+					seenUnknown[result.Reference] = struct{}{}
+					unknownImages++
 				}
+			} else if result.CheckedAt != nil && (registryHealth.LastSuccess == nil || result.CheckedAt.After(*registryHealth.LastSuccess)) {
+				checkedAt := *result.CheckedAt
+				registryHealth.LastSuccess = &checkedAt
 			}
 		}
 	}

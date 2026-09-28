@@ -4,6 +4,23 @@ metadata:
   name: workflow-monitoring
 ---
 apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: cronworkflow-dashboard-config
+  namespace: workflow-monitoring
+data:
+  HTTP_ADDR: ":8080"
+  WEB_DIR: /app/web
+  AZURE_BASE_URL: https://dev.azure.com/ORG
+  AZURE_REPO_URL: https://dev.azure.com/ORG/PROJECT/_git/REPOSITORY
+  AZURE_REPO_BRANCH: main
+  AZURE_PROJECTS_PATH: /path/to/project.json
+  PROJECT_REFRESH_INTERVAL: 5m
+  IMAGE_CACHE_TTL: 5m
+  REGISTRY_CHECK_CONCURRENCY: "4"
+  NEXUS_URL: https://nexus.example.com/repository/docker-hosted
+---
+apiVersion: v1
 kind: ServiceAccount
 metadata:
   name: cronworkflow-dashboard
@@ -70,25 +87,18 @@ spec:
           type: RuntimeDefault
       containers:
         - name: dashboard
-          image: image-registry.openshift-image-registry.svc:5000/workflow-monitoring/cronworkflow-dashboard:latest
-          imagePullPolicy: Always
+          image: monitor:0.0.1
+          imagePullPolicy: IfNotPresent
+          envFrom:
+            - configMapRef:
+                name: cronworkflow-dashboard-config
+            - secretRef:
+                name: cronworkflow-dashboard-secrets
+                optional: true
           ports:
             - name: http
               containerPort: 8080
               protocol: TCP
-          env:
-            - name: AZURE_REPO_URL
-              value: https://dev.azure.com/ORG/PROJECT/_git/REPOSITORY
-            - name: AZURE_REPO_BRANCH
-              value: main
-            - name: AZURE_PROJECTS_PATH
-              value: /path/to/project.json
-            - name: PROJECT_REFRESH_INTERVAL
-              value: 5m
-            - name: IMAGE_CACHE_TTL
-              value: 5m
-            - name: REGISTRY_CHECK_CONCURRENCY
-              value: "4"
           startupProbe:
             httpGet:
               path: /healthz
@@ -119,28 +129,6 @@ spec:
             capabilities:
               drop:
                 - ALL
-          volumeMounts:
-            - name: azure-token
-              mountPath: /var/run/azure
-              readOnly: true
-            - name: registry-auth
-              mountPath: /var/run/registry
-              readOnly: true
-      volumes:
-        - name: azure-token
-          secret:
-            secretName: cronworkflow-azure-token
-            optional: true
-            items:
-              - key: token
-                path: token
-        - name: registry-auth
-          secret:
-            secretName: cronworkflow-registry-auth
-            optional: true
-            items:
-              - key: config.json
-                path: config.json
       restartPolicy: Always
 ---
 apiVersion: v1

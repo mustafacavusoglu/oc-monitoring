@@ -3,7 +3,6 @@ package config
 import (
 	"fmt"
 	"os"
-	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
@@ -12,11 +11,13 @@ import (
 type Config struct {
 	HTTPAddr                 string
 	WebDir                   string
+	AzureBaseURL             string
 	AzureRepoURL             string
 	AzureRepoBranch          string
 	AzureProjectsPath        string
+	AzureToken               string
 	AzureTokenFile           string
-	RegistryAuthFile         string
+	NexusURL                 string
 	ProjectRefreshInterval   time.Duration
 	ImageCacheTTL            time.Duration
 	RegistryCheckConcurrency int
@@ -26,14 +27,16 @@ func Load() (Config, error) {
 	cfg := Config{
 		HTTPAddr:          valueOr("HTTP_ADDR", ":8080"),
 		WebDir:            valueOr("WEB_DIR", "web/dist"),
+		AzureBaseURL:      strings.TrimRight(strings.TrimSpace(os.Getenv("AZURE_BASE_URL")), "/"),
 		AzureRepoURL:      strings.TrimSpace(os.Getenv("AZURE_REPO_URL")),
 		AzureRepoBranch:   strings.TrimSpace(os.Getenv("AZURE_REPO_BRANCH")),
 		AzureProjectsPath: strings.TrimSpace(os.Getenv("AZURE_PROJECTS_PATH")),
+		AzureToken:        strings.TrimSpace(os.Getenv("AZURE_TOKEN")),
 		AzureTokenFile:    strings.TrimSpace(os.Getenv("AZURE_TOKEN_FILE")),
-		RegistryAuthFile:  strings.TrimSpace(os.Getenv("REGISTRY_AUTH_FILE")),
+		NexusURL:          strings.TrimSpace(os.Getenv("NEXUS_URL")),
 	}
-	if cfg.AzureRepoURL == "" || cfg.AzureRepoBranch == "" || cfg.AzureProjectsPath == "" {
-		return Config{}, fmt.Errorf("AZURE_REPO_URL, AZURE_REPO_BRANCH, and AZURE_PROJECTS_PATH are required")
+	if cfg.AzureBaseURL == "" || cfg.AzureRepoURL == "" || cfg.AzureRepoBranch == "" || cfg.AzureProjectsPath == "" || cfg.NexusURL == "" {
+		return Config{}, fmt.Errorf("AZURE_BASE_URL, AZURE_REPO_URL, AZURE_REPO_BRANCH, AZURE_PROJECTS_PATH, and NEXUS_URL are required")
 	}
 
 	var err error
@@ -52,14 +55,6 @@ func Load() (Config, error) {
 	}
 	if cfg.ProjectRefreshInterval <= 0 || cfg.ImageCacheTTL <= 0 {
 		return Config{}, fmt.Errorf("refresh intervals must be positive")
-	}
-	if cfg.RegistryAuthFile != "" {
-		if filepath.Base(cfg.RegistryAuthFile) != "config.json" {
-			return Config{}, fmt.Errorf("REGISTRY_AUTH_FILE must point to a Docker config file named config.json")
-		}
-		if err := os.Setenv("DOCKER_CONFIG", filepath.Dir(cfg.RegistryAuthFile)); err != nil {
-			return Config{}, fmt.Errorf("configure registry credentials: %w", err)
-		}
 	}
 	return cfg, nil
 }

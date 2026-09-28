@@ -16,6 +16,7 @@ import (
 
 type Snapshot struct {
 	Namespaces  []string
+	ImageIDs    map[string]string
 	LastSuccess *time.Time
 	Stale       bool
 	Error       string
@@ -56,6 +57,10 @@ func (s *Source) Snapshot() Snapshot {
 	defer s.mu.RUnlock()
 	snapshot := s.snapshot
 	snapshot.Namespaces = append([]string(nil), s.snapshot.Namespaces...)
+	snapshot.ImageIDs = make(map[string]string, len(s.snapshot.ImageIDs))
+	for namespace, imageID := range s.snapshot.ImageIDs {
+		snapshot.ImageIDs[namespace] = imageID
+	}
 	if s.snapshot.LastSuccess != nil {
 		lastSuccess := *s.snapshot.LastSuccess
 		snapshot.LastSuccess = &lastSuccess
@@ -69,14 +74,30 @@ func (s *Source) refresh(ctx context.Context) {
 		var namespaces []string
 		namespaces, err = selectBCHNamespaces(projects)
 		if err == nil {
+			imageIDs := make(map[string]string, len(namespaces))
+			for _, namespace := range namespaces {
+				imageIDs[namespace], err = s.client.projectImageID(ctx, namespace)
+				if err != nil {
+					err = fmt.Errorf("read image ID for namespace %q: %w", namespace, err)
+					break
+				}
+			}
+			if err != nil {
+				s.markStale(err)
+				return
+			}
 			now := time.Now().UTC()
 			s.mu.Lock()
-			s.snapshot = Snapshot{Namespaces: namespaces, LastSuccess: &now}
+			s.snapshot = Snapshot{Namespaces: namespaces, ImageIDs: imageIDs, LastSuccess: &now}
 			s.mu.Unlock()
 			return
 		}
 	}
 
+	s.markStale(err)
+}
+
+func (s *Source) markStale(err error) {
 	s.mu.Lock()
 	s.snapshot.Stale = true
 	s.snapshot.Error = err.Error()
