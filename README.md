@@ -28,7 +28,7 @@ Container, `:8080` portunda API ve arayüzü aynı origin üzerinden sunar. `/he
 
 `deploy/openshift.yaml` içindeki `cronworkflow-dashboard-config` ConfigMap’ini kurumunuzun değerleriyle güncelleyin. `AZURE_BASE_URL` sonuna namespace key ve `/Projects/MainProjects/values.yaml` eklenerek values dosyasına GET atılır. `AZURE_REPO_URL`, branch ve path proje JSON’unu almak içindir. `NEXUS_URL` image ID’nin ekleneceği temel URL’dir. Diğer servis ayarları da ConfigMap’ten `envFrom` ile alınır. Namespace varsayılanı `workflow-monitoring`.
 
-Image `monitor:0.0.1` etiketini kullanır. OrbStack’in yerel Kubernetes kümesi bu image’ı kullanacaksa aynı Docker engine’e build edin; `imagePullPolicy: IfNotPresent` yerel image’ı kullanır. Uzak kümeye kurulumda image’ı Nexus’a push edip Deployment’taki `image:` alanına tam registry image adresini yazın. Kubernetes `image:` alanı ConfigMap değerlerini genişletemediği için Nexus URL’si doğrudan buraya bağlanamaz.
+Deployment, Docker Hub’daki `mustafa12/monitor:0.0.1` image’ını kullanır. Uygulamanın kontrol ettiği Nexus endpoint’i ayrı `NEXUS_URL` ConfigMap ayarıdır; image dağıtım registry’siyle karıştırılmamalıdır.
 
 ```sh
 oc apply -f deploy/openshift.yaml
