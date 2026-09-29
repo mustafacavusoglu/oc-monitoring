@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log"
 	"net/http"
 	"os"
 	"sort"
@@ -98,6 +99,7 @@ func (s *Source) refresh(ctx context.Context) {
 }
 
 func (s *Source) markStale(err error) {
+	log.Printf("project source refresh failed: %v", err)
 	s.mu.Lock()
 	s.snapshot.Stale = true
 	s.snapshot.Error = err.Error()
