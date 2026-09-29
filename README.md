@@ -28,7 +28,7 @@ Container, `:8080` portunda API ve arayüzü aynı origin üzerinden sunar. `/he
 
 `deploy/openshift.yaml` içindeki `cronworkflow-dashboard-config` ConfigMap’ini kurumunuzun değerleriyle güncelleyin. `AZURE_BASE_URL` sonuna namespace key ve `/Projects/MainProjects/values.yaml` eklenerek values dosyasına GET atılır. `AZURE_REPO_URL`, branch ve path proje JSON’unu almak içindir. `NEXUS_URL` image ID’nin ekleneceği temel URL’dir. Diğer servis ayarları da ConfigMap’ten `envFrom` ile alınır. Namespace varsayılanı `workflow-monitoring`.
 
-Deployment, amd64 ve arm64 platformlarını içeren Docker Hub’daki `mustafa12/monitor:0.0.6` image’ını kullanır. Uygulamanın kontrol ettiği Nexus endpoint’i ayrı `NEXUS_URL` ConfigMap ayarıdır; image dağıtım registry’siyle karıştırılmamalıdır.
+Deployment, amd64 ve arm64 platformlarını içeren Docker Hub’daki `mustafa12/monitor:0.0.7` image’ını kullanır. Uygulamanın kontrol ettiği Nexus endpoint’i ayrı `NEXUS_URL` ConfigMap ayarıdır; image dağıtım registry’siyle karıştırılmamalıdır.
 
 ```sh
 oc apply -f deploy/openshift.yaml

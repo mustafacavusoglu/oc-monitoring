@@ -160,7 +160,7 @@ func selectBCHNamespaces(projects map[string]json.RawMessage) ([]string, error) 
 			return nil, fmt.Errorf("project %q serving must be a string array", namespace)
 		}
 		for _, value := range serving {
-			if strings.EqualFold(strings.TrimSpace(value), "BCH") {
+			if strings.Contains(strings.ToLower(strings.TrimSpace(value)), "bch") {
 				namespaces = append(namespaces, namespace)
 				break
 			}
