@@ -24,8 +24,9 @@ type Snapshot struct {
 }
 
 type projectTarget struct {
-	ProjectKey string
-	Namespace  string
+	ProjectKey  string
+	Namespace   string
+	CheckImages bool
 }
 
 type Source struct {
@@ -79,59 +80,43 @@ func (s *Source) refresh(ctx context.Context) {
 	if err == nil {
 		log.Printf("project source fetched project metadata: entries=%d", len(projects))
 		var targets []projectTarget
-		targets, err = selectBCHProjects(projects)
+		targets, err = projectTargets(projects)
 		if err == nil {
 			namespaces := make([]string, 0, len(targets))
+			bchProjects := 0
 			for _, target := range targets {
 				namespaces = append(namespaces, target.Namespace)
+				if target.CheckImages {
+					bchProjects++
+				}
 			}
-			if len(namespaces) == 0 {
-				log.Printf("project source selected no BCH namespaces; inspecting project keys and serving values")
-				logEmptyNamespaceSelection(projects)
-			} else {
-				log.Printf("project source selected BCH namespaces: count=%d namespaces=%q", len(namespaces), namespaces)
-			}
+			log.Printf("project source generated namespaces: project_entries=%d namespaces=%q BCH_image_projects=%d", len(projects), namespaces, bchProjects)
 			imageIDs := make(map[string][]string, len(namespaces))
+			var imageErrors []string
 			for _, target := range targets {
+				if !target.CheckImages {
+					continue
+				}
 				imageIDs[target.Namespace], err = s.client.projectImageIDs(ctx, target.ProjectKey)
 				if err != nil {
-					err = fmt.Errorf("read image ID for project %q (namespace %q): %w", target.ProjectKey, target.Namespace, err)
-					break
+					imageErr := fmt.Errorf("read image ID for project %q (namespace %q): %w", target.ProjectKey, target.Namespace, err)
+					log.Printf("project source image lookup failed: %v", imageErr)
+					imageErrors = append(imageErrors, imageErr.Error())
+					delete(imageIDs, target.Namespace)
+					continue
 				}
 				log.Printf("project source loaded image IDs: project=%q namespace=%q count=%d", target.ProjectKey, target.Namespace, len(imageIDs[target.Namespace]))
 			}
-			if err != nil {
-				s.markStale(err)
-				return
-			}
 			now := time.Now().UTC()
 			s.mu.Lock()
-			s.snapshot = Snapshot{Namespaces: namespaces, ImageIDs: imageIDs, LastSuccess: &now}
+			s.snapshot = Snapshot{Namespaces: namespaces, ImageIDs: imageIDs, LastSuccess: &now, Stale: len(imageErrors) > 0, Error: strings.Join(imageErrors, "; ")}
 			s.mu.Unlock()
-			log.Printf("project source refresh succeeded: project entries=%d namespaces=%d image IDs=%d", len(projects), len(namespaces), countImageIDs(imageIDs))
+			log.Printf("project source refresh completed: project_entries=%d namespaces=%d BCH_image_projects=%d image_ids=%d image_errors=%d", len(projects), len(namespaces), bchProjects, countImageIDs(imageIDs), len(imageErrors))
 			return
 		}
 	}
 
 	s.markStale(err)
-}
-
-func logEmptyNamespaceSelection(projects map[string]json.RawMessage) {
-	keys := make([]string, 0, len(projects))
-	for key := range projects {
-		keys = append(keys, key)
-	}
-	sort.Strings(keys)
-	for _, key := range keys {
-		var project struct {
-			Serving []string `json:"serving"`
-		}
-		if err := json.Unmarshal(projects[key], &project); err != nil {
-			log.Printf("project source namespace candidate: key=%q metadata parse error=%v", key, err)
-			continue
-		}
-		log.Printf("project source namespace candidate: key=%q serving=%q", key, project.Serving)
-	}
 }
 
 func countImageIDs(imageIDs map[string][]string) int {
@@ -151,18 +136,20 @@ func (s *Source) markStale(err error) {
 }
 
 func selectBCHNamespaces(projects map[string]json.RawMessage) ([]string, error) {
-	targets, err := selectBCHProjects(projects)
+	targets, err := projectTargets(projects)
 	if err != nil {
 		return nil, err
 	}
 	namespaces := make([]string, 0, len(targets))
 	for _, target := range targets {
-		namespaces = append(namespaces, target.Namespace)
+		if target.CheckImages {
+			namespaces = append(namespaces, target.Namespace)
+		}
 	}
 	return namespaces, nil
 }
 
-func selectBCHProjects(projects map[string]json.RawMessage) ([]projectTarget, error) {
+func projectTargets(projects map[string]json.RawMessage) ([]projectTarget, error) {
 	targets := make([]projectTarget, 0)
 	seenNamespaces := make(map[string]string, len(projects))
 	for projectKey, rawProject := range projects {
@@ -170,31 +157,47 @@ func selectBCHProjects(projects map[string]json.RawMessage) ([]projectTarget, er
 		if err := json.Unmarshal(rawProject, &project); err != nil || project == nil {
 			return nil, fmt.Errorf("project %q must contain a JSON object", projectKey)
 		}
-		servingRaw, found := project["serving"]
-		if !found {
-			continue
+		namespace := strings.ToLower(strings.ReplaceAll(projectKey, "_", "-"))
+		if previous, found := seenNamespaces[namespace]; found {
+			return nil, fmt.Errorf("project keys %q and %q normalize to the same namespace %q", previous, projectKey, namespace)
 		}
-		if len(strings.TrimSpace(string(servingRaw))) == 0 || strings.TrimSpace(string(servingRaw))[0] != '[' {
-			return nil, fmt.Errorf("project %q serving must be a string array", projectKey)
-		}
-		var serving []string
-		if err := json.Unmarshal(servingRaw, &serving); err != nil {
-			return nil, fmt.Errorf("project %q serving must be a string array", projectKey)
-		}
-		for _, value := range serving {
-			if strings.Contains(strings.ToLower(strings.TrimSpace(value)), "bch") {
-				namespace := strings.ToLower(strings.ReplaceAll(projectKey, "_", "-"))
-				if previous, found := seenNamespaces[namespace]; found {
-					return nil, fmt.Errorf("project keys %q and %q normalize to the same namespace %q", previous, projectKey, namespace)
-				}
-				seenNamespaces[namespace] = projectKey
-				targets = append(targets, projectTarget{ProjectKey: projectKey, Namespace: namespace})
-				break
+		seenNamespaces[namespace] = projectKey
+		target := projectTarget{ProjectKey: projectKey, Namespace: namespace}
+		typeName := ""
+		if typeRaw := projectField(project, "type"); len(typeRaw) > 0 {
+			if err := json.Unmarshal(typeRaw, &typeName); err != nil {
+				return nil, fmt.Errorf("project %q Type must be a string", projectKey)
 			}
 		}
+		servingRaw := projectField(project, "serving")
+		if len(servingRaw) > 0 {
+			if len(strings.TrimSpace(string(servingRaw))) == 0 || strings.TrimSpace(string(servingRaw))[0] != '[' {
+				return nil, fmt.Errorf("project %q serving must be a string array", projectKey)
+			}
+			var serving []string
+			if err := json.Unmarshal(servingRaw, &serving); err != nil {
+				return nil, fmt.Errorf("project %q serving must be a string array", projectKey)
+			}
+			for _, value := range serving {
+				if strings.EqualFold(strings.TrimSpace(typeName), "CustomServe") && strings.Contains(strings.ToLower(strings.TrimSpace(value)), "bch") {
+					target.CheckImages = true
+					break
+				}
+			}
+		}
+		targets = append(targets, target)
 	}
 	sort.Slice(targets, func(i, j int) bool { return targets[i].Namespace < targets[j].Namespace })
 	return targets, nil
+}
+
+func projectField(project map[string]json.RawMessage, name string) json.RawMessage {
+	for key, value := range project {
+		if strings.EqualFold(key, name) {
+			return value
+		}
+	}
+	return nil
 }
 
 func readSecretFile(file string) (string, error) {

@@ -1,6 +1,6 @@
 {
-  "payments-bch": { "serving": ["BCH"], "team": "payments" },
-  "retail-bch": { "serving": ["bch", "OTHER"], "team": "retail" },
-  "platform-tools": { "serving": ["OTHER"], "team": "platform" },
+  "payments-bch": { "Type": "CustomServe", "serving": ["BCH"], "team": "payments" },
+  "retail-bch": { "Type": "CustomServe", "serving": ["bch", "OTHER"], "team": "retail" },
+  "platform-tools": { "Type": "CustomServe", "serving": ["OTHER"], "team": "platform" },
   "unclassified": { "team": "ops" }
 }

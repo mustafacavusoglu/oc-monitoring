@@ -1,6 +1,6 @@
 # OpenShift Argo CronWorkflow Dashboard
 
-OpenShift içinde çalışan servis, Azure Repos’taki proje JSON’unda `serving` listesinde `bch` geçen key’leri seçer. Namespace, seçilen JSON key’inin küçük harfe çevrilip `_` karakterlerinin `-` yapılmasıyla üretilir. Azure `values.yaml` isteğinde orijinal key kullanılır; Nexus image kontrolü namespace adıyla yapılır. Her seçili proje için `Projects/MainProjects/values.yaml` dosyasındaki `project.batchDeploys[].imageId` değerleri okunur ve her biri için `NEXUS_URL/mlops/bch-{namespace}:{imageId}` adresine GET atılır. Yalnızca HTTP 200 image’ı mevcut gösterir; diğer HTTP durumları mevcut değil olarak gösterilir. Argo `CronWorkflow` ve `Workflow` kaynaklarıyla ilişkili pod’lar informer cache üzerinden izlenir.
+OpenShift içinde çalışan servis, Azure Repos’taki her proje JSON key’inden namespace üretir: key küçük harfe çevrilir ve `_` karakterleri `-` olur. Azure `values.yaml` isteğinde orijinal key kullanılır. Yalnızca `Type` değeri `CustomServe` olan ve `serving` listesinde harf duyarsız `bch` eşleşmesi bulunan projelerin image’ları kontrol edilir. Bu projeler için `Projects/MainProjects/values.yaml` dosyasındaki `project.batchDeploys[].imageId` değerleri okunur ve her biri için `NEXUS_URL/mlops/bch-{namespace}:{imageId}` adresine GET atılır. Yalnızca HTTP 200 image’ı mevcut gösterir; diğer HTTP durumları mevcut değil olarak gösterilir. Argo `CronWorkflow` ve `Workflow` kaynaklarıyla ilişkili pod’lar informer cache üzerinden izlenir.
 
 ## Geliştirme ve container oluşturma
 
@@ -28,7 +28,7 @@ Container, `:8080` portunda API ve arayüzü aynı origin üzerinden sunar. `/he
 
 `deploy/openshift.yaml` içindeki `cronworkflow-dashboard-config` ConfigMap’ini kurumunuzun değerleriyle güncelleyin. `AZURE_BASE_URL` sonuna namespace key ve `/Projects/MainProjects/values.yaml` eklenerek values dosyasına GET atılır. `AZURE_REPO_URL`, branch ve path proje JSON’unu almak içindir. `NEXUS_URL` image ID’nin ekleneceği temel URL’dir. Diğer servis ayarları da ConfigMap’ten `envFrom` ile alınır. Namespace varsayılanı `workflow-monitoring`.
 
-Deployment, amd64 ve arm64 platformlarını içeren Docker Hub’daki `mustafa12/monitor:0.0.9` image’ını kullanır. Uygulamanın kontrol ettiği Nexus endpoint’i ayrı `NEXUS_URL` ConfigMap ayarıdır; image dağıtım registry’siyle karıştırılmamalıdır.
+Deployment, amd64 ve arm64 platformlarını içeren Docker Hub’daki `mustafa12/monitor:0.0.11` image’ını kullanır. Uygulamanın kontrol ettiği Nexus endpoint’i ayrı `NEXUS_URL` ConfigMap ayarıdır; image dağıtım registry’siyle karıştırılmamalıdır.
 
 ```sh
 oc apply -f deploy/openshift.yaml
@@ -49,7 +49,7 @@ oc apply -f deploy/openshift.yaml
 }
 ```
 
-JSON’un kök seviyesi proje key’lerinin bulunduğu bir object olmalıdır. `serving` alanı string array’idir; `bch` eşleşmesi büyük/küçük harfe duyarsızdır. Namespace, proje key’inin küçük harfe çevrilip `_` karakterlerinin `-` yapılmasıyla üretilir. Namespace’ler proje refresh aralığında yenilenir. Azure kaynağı geçici olarak erişilemezse son başarılı namespace listesi kullanılmaya devam eder ve kaynak “degraded” görünür.
+JSON’un kök seviyesi proje key’lerinin bulunduğu bir object olmalıdır. Tüm key’ler namespace’e dönüştürülür. Image kontrolü için `Type` değeri `CustomServe`, `serving` alanı ise `bch` içermelidir; eşleştirmeler büyük/küçük harfe duyarsızdır. Namespace’ler proje refresh aralığında yenilenir. Azure kaynağı geçici olarak erişilemezse son başarılı namespace listesi kullanılmaya devam eder ve kaynak “degraded” görünür.
 
 ### Azure kimlik doğrulaması
 
