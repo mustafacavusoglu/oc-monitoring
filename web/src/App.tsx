@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { fetchDashboard } from './api'
 import type { CronWorkflow, DashboardResponse, ImageResult, Pod, SourceHealth } from './types'
 
@@ -14,7 +14,7 @@ function label(value?: string) {
   const normalized = (value || 'Unavailable').toLowerCase()
   const labels: Record<string, string> = {
     succeeded: 'Başarılı', failed: 'Başarısız', error: 'Hata', running: 'Çalışıyor', pending: 'Bekliyor',
-    unavailable: 'Veri yok', present: 'Mevcut', missing: 'Bulunamadı', unknown: 'Bilinmiyor',
+    unavailable: 'Veri yok', exist: 'Mevcut', missing: 'Bulunamadı', unknown: 'Bilinmiyor',
     suspended: 'Askıda', active: 'Aktif', ready: 'Hazır', syncing: 'Senkronize ediliyor', degraded: 'Sorun var',
   }
   return labels[normalized] || value || 'Veri yok'
@@ -29,6 +29,45 @@ function SourceStatus({ name, source }: { name: string; source: SourceHealth }) 
   return <span className="source-status" title={source.error || `Son başarılı güncelleme: ${formatDate(source.lastSuccess)}`}>
     <span className={`source-dot source-${source.state.toLowerCase()}`} />{name}: {label(source.state)}
   </span>
+}
+
+function NamespaceFilter({ namespaces, value, onChange }: { namespaces: string[]; value: string; onChange: (value: string) => void }) {
+  const [open, setOpen] = useState(false)
+  const [query, setQuery] = useState('')
+  const root = useRef<HTMLDivElement>(null)
+  const options = ['all', ...namespaces].filter((item) =>
+    item === 'all' || item.toLocaleLowerCase('tr-TR').includes(query.trim().toLocaleLowerCase('tr-TR')))
+
+  useEffect(() => {
+    if (!open) return
+    const closeOnOutsideClick = (event: MouseEvent) => {
+      if (event.target instanceof Node && !root.current?.contains(event.target)) setOpen(false)
+    }
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') setOpen(false)
+    }
+    document.addEventListener('mousedown', closeOnOutsideClick)
+    document.addEventListener('keydown', closeOnEscape)
+    return () => {
+      document.removeEventListener('mousedown', closeOnOutsideClick)
+      document.removeEventListener('keydown', closeOnEscape)
+    }
+  }, [open])
+
+  return <div className="namespace-filter" ref={root}>
+    <button className="namespace-trigger" type="button" aria-haspopup="listbox" aria-expanded={open} onClick={() => setOpen(!open)}>
+      {value === 'all' ? 'Tüm namespace’ler' : value}<span aria-hidden="true">⌄</span>
+    </button>
+    {open ? <div className="namespace-menu">
+      <input autoFocus aria-label="Namespace ara" placeholder="Namespace ara…" value={query} onChange={(event) => setQuery(event.target.value)} />
+      <div className="namespace-options" role="listbox" aria-label="Namespace’ler">
+        {options.map((item) => <button key={item} type="button" role="option" aria-selected={value === item} onClick={() => { onChange(item); setOpen(false); setQuery('') }}>
+          {item === 'all' ? 'Tüm namespace’ler' : item}
+        </button>)}
+        {!options.length ? <span className="namespace-empty">Eşleşme yok.</span> : null}
+      </div>
+    </div> : null}
+  </div>
 }
 
 function PodDetails({ pod }: { pod: Pod }) {
@@ -188,14 +227,12 @@ export default function App() {
       <section className="workflows-section">
         <div className="section-heading"><div><h2>CronWorkflow’lar</h2><span>{visibleWorkflows.length} kayıt</span></div>
           <div className="filters">
-            <label>Namespace <select value={namespace} onChange={(event) => setNamespace(event.target.value)}>
-              <option value="all">Tüm namespace’ler</option>{namespaces.map((item) => <option key={item} value={item}>{item}</option>)}
-            </select></label>
+            <div className="filter-control"><span>Namespace</span><NamespaceFilter namespaces={namespaces} value={namespace} onChange={setNamespace} /></div>
             <label>Son çalışma <select value={runFilter} onChange={(event) => setRunFilter(event.target.value)}>
               <option value="all">Tümü</option><option value="running">Çalışıyor</option><option value="succeeded">Başarılı</option><option value="failed">Başarısız / hata</option><option value="pending">Bekliyor</option><option value="unavailable">Veri yok</option>
             </select></label>
             <label>Image <select value={imageFilter} onChange={(event) => setImageFilter(event.target.value)}>
-              <option value="all">Tümü</option><option value="present">Mevcut</option><option value="missing">Bulunamadı</option><option value="unknown">Bilinmiyor</option>
+              <option value="all">Tümü</option><option value="exist">Mevcut</option><option value="missing">Bulunamadı</option><option value="error">Hata</option><option value="unknown">Bilinmiyor</option>
             </select></label>
           </div>
         </div>

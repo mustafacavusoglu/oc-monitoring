@@ -18,7 +18,7 @@ data:
   PROJECT_REFRESH_INTERVAL: 5m
   IMAGE_CACHE_TTL: 5m
   REGISTRY_CHECK_CONCURRENCY: "4"
-  NEXUS_URL: https://nexus.example.com/repository/docker-hosted
+  NEXUS_URL: https://repomaster.company.com/repository/company-private/v2/mlops/
 ---
 apiVersion: v1
 kind: ServiceAccount
@@ -87,7 +87,7 @@ spec:
           type: RuntimeDefault
       containers:
         - name: dashboard
-          image: mustafa12/monitor:0.0.11
+          image: mustafa12/monitor:0.0.12
           imagePullPolicy: IfNotPresent
           envFrom:
             - configMapRef:

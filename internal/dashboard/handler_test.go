@@ -39,12 +39,12 @@ func TestDashboardEndpointReturnsSampleSnapshotAndRegistryHealth(t *testing.T) {
 			return cluster.Snapshot{CronWorkflows: []*unstructured.Unstructured{cron}, Health: model.SourceHealth{State: "ready"}}
 		},
 		func(_ context.Context, refs []string) map[string]model.ImageResult {
-			if len(refs) != 2 || refs[0] != "mlops/bch-payments:ald7383jdls8373" || refs[1] != "mlops/bch-payments:image-2" {
+			if len(refs) != 2 || refs[0] != "bch-payments:ald7383jdls8373" || refs[1] != "bch-payments:image-2" {
 				t.Fatalf("image refs = %v", refs)
 			}
 			return map[string]model.ImageResult{
 				refs[0]: {Reference: refs[0], Status: "unknown", CheckedAt: &checkedAt, Error: "lookup cancelled"},
-				refs[1]: {Reference: refs[1], Status: "present", CheckedAt: &checkedAt},
+				refs[1]: {Reference: refs[1], Status: "exist", CheckedAt: &checkedAt},
 			}
 		},
 	)

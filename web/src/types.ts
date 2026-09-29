@@ -1,6 +1,6 @@
 export type ImageResult = {
   reference: string
-  status: 'present' | 'missing' | 'unknown' | string
+  status: 'exist' | 'missing' | 'error' | 'unknown' | string
   checkedAt?: string
   error?: string
 }

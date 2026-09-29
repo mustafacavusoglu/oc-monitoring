@@ -121,24 +121,32 @@ func (c *Checker) checkOne(ctx context.Context, imageID string) model.ImageResul
 
 func (c *Checker) get(ctx context.Context, imageID string) model.ImageResult {
 	checkedAt := time.Now().UTC()
-	result := model.ImageResult{Reference: imageID, CheckedAt: &checkedAt, Status: "missing"}
+	result := model.ImageResult{Reference: imageID, CheckedAt: &checkedAt, Status: "error"}
 	requestURL, err := url.JoinPath(c.baseURL, imageID)
 	if err != nil {
+		result.Error = err.Error()
 		return result
 	}
 	requestCtx, cancel := context.WithTimeout(ctx, requestTimeout)
 	defer cancel()
 	req, err := http.NewRequestWithContext(requestCtx, http.MethodGet, requestURL, nil)
 	if err != nil {
+		result.Error = err.Error()
 		return result
 	}
 	resp, err := c.client.Do(req)
 	if err != nil {
+		result.Error = err.Error()
 		return result
 	}
 	resp.Body.Close()
-	if resp.StatusCode == http.StatusOK {
-		result.Status = "present"
+	switch resp.StatusCode {
+	case http.StatusOK:
+		result.Status = "exist"
+	case http.StatusNotFound:
+		result.Status = "missing"
+	default:
+		result.Error = fmt.Sprintf("unexpected HTTP status %d", resp.StatusCode)
 	}
 	return result
 }

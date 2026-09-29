@@ -55,15 +55,15 @@ func (h *Handler) snapshot(ctx context.Context) model.DashboardResponse {
 	imageRefs := make(map[string][]string, len(projectSnapshot.ImageIDs))
 	for project, imageIDs := range projectSnapshot.ImageIDs {
 		for _, imageID := range imageIDs {
-			ref := fmt.Sprintf("mlops/bch-%s:%s", project, imageID)
+			ref := fmt.Sprintf("bch-%s:%s", project, imageID)
 			images = append(images, ref)
 			imageRefs[project] = append(imageRefs[project], ref)
 		}
 	}
 	imageResults := h.checkImages(ctx, images)
 	registryHealth := model.SourceHealth{State: "ready"}
-	unknownImages := 0
-	seenUnknown := make(map[string]struct{})
+	failedImages := 0
+	seenFailed := make(map[string]struct{})
 	for i := range views {
 		views[i].Images = make([]model.ImageResult, 0)
 		for _, ref := range imageRefs[views[i].Namespace] {
@@ -72,10 +72,10 @@ func (h *Handler) snapshot(ctx context.Context) model.DashboardResponse {
 				continue
 			}
 			views[i].Images = append(views[i].Images, result)
-			if result.Status == "unknown" {
-				if _, seen := seenUnknown[result.Reference]; !seen {
-					seenUnknown[result.Reference] = struct{}{}
-					unknownImages++
+			if result.Status == "error" || result.Status == "unknown" {
+				if _, seen := seenFailed[result.Reference]; !seen {
+					seenFailed[result.Reference] = struct{}{}
+					failedImages++
 				}
 			} else if result.CheckedAt != nil && (registryHealth.LastSuccess == nil || result.CheckedAt.After(*registryHealth.LastSuccess)) {
 				checkedAt := *result.CheckedAt
@@ -83,9 +83,9 @@ func (h *Handler) snapshot(ctx context.Context) model.DashboardResponse {
 			}
 		}
 	}
-	if unknownImages > 0 {
+	if failedImages > 0 {
 		registryHealth.State = "degraded"
-		registryHealth.Error = fmt.Sprintf("%d image checks are unknown", unknownImages)
+		registryHealth.Error = fmt.Sprintf("%d image checks failed", failedImages)
 	}
 
 	projectHealth := model.SourceHealth{State: "ready", LastSuccess: projectSnapshot.LastSuccess}
