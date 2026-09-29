@@ -1,6 +1,6 @@
 # OpenShift Argo CronWorkflow Dashboard
 
-OpenShift içinde çalışan servis, Azure Repos’taki her proje JSON key’inden namespace üretir: key küçük harfe çevrilir ve `_` karakterleri `-` olur. Yalnızca `Type` değeri `CustomServe` olan ve `serving` listesinde harf duyarsız `bch` eşleşmesi bulunan projelerin namespace’leri izlenir. Image ID, CronWorkflow `spec.workflowSpec` içindeki image referansının son `:` parçasından alınır; her ID için `NEXUS_URL/bch-{namespace}:{imageId}` adresine GET atılır. HTTP 200 `exist`, 404 `missing`, diğer HTTP durumları veya bağlantı hataları `error` gösterir. Argo `CronWorkflow` ve `Workflow` kaynaklarıyla ilişkili pod’lar informer cache üzerinden izlenir.
+OpenShift içinde çalışan servis, Azure Repos’taki her proje JSON key’inden namespace üretir: key küçük harfe çevrilir ve `_` karakterleri `-` olur. Yalnızca `Type` değeri `CustomServe` olan ve `serving` listesinde harf duyarsız `bch` eşleşmesi bulunan projelerin namespace’leri izlenir. CronWorkflow `spec.workflowSpec` altındaki image’lardan yalnızca adı namespace/proje adını içerenler seçilir; image ID son `:` parçasından alınır ve `NEXUS_URL/bch-{namespace}/manifests/{imageId}` adresine GET atılır. HTTP 200 `exist`, 404 `missing`, diğer HTTP durumları veya bağlantı hataları `error` gösterir. Argo `CronWorkflow` ve `Workflow` kaynaklarıyla ilişkili pod’lar informer cache üzerinden izlenir.
 
 ## Geliştirme ve container oluşturma
 
@@ -28,7 +28,7 @@ Container, `:8080` portunda API ve arayüzü aynı origin üzerinden sunar. `/he
 
 `deploy/openshift.yaml` içindeki `cronworkflow-dashboard-config` ConfigMap’ini kurumunuzun değerleriyle güncelleyin. `AZURE_REPO_URL`, branch ve path proje JSON’unu almak içindir. `NEXUS_URL`, CronWorkflow image tag’inden çıkarılan ID’nin ekleneceği temel URL’dir. Diğer servis ayarları da ConfigMap’ten `envFrom` ile alınır. Namespace varsayılanı `workflow-monitoring`.
 
-Deployment, amd64 ve arm64 platformlarını içeren Docker Hub’daki `mustafa12/monitor:0.0.13` image’ını kullanır. Uygulamanın kontrol ettiği Nexus endpoint’i ayrı `NEXUS_URL` ConfigMap ayarıdır; image dağıtım registry’siyle karıştırılmamalıdır.
+Deployment, amd64 ve arm64 platformlarını içeren Docker Hub’daki `mustafa12/monitor:0.0.16` image’ını kullanır. Uygulamanın kontrol ettiği Nexus endpoint’i ayrı `NEXUS_URL` ConfigMap ayarıdır; image dağıtım registry’siyle karıştırılmamalıdır.
 
 ```sh
 oc apply -f deploy/openshift.yaml
@@ -63,7 +63,7 @@ oc create secret generic cronworkflow-dashboard-secrets \
 
 Azure DevOps erişimi gerekiyorsa ilgili token’a repo içeriğini okuma yetkisi verin. PAT’in Secret key’i `AZURE_TOKEN` olmalıdır. Pod’a Secret’tan ortam değişkeni olarak aktarılır; loglanmaz.
 
-Nexus kontrolü anonim HTTP GET kullanır; bu sürümde Nexus username/password yoktur. CronWorkflow `spec.workflowSpec` altındaki image değerlerinin son `:` parçası image ID kabul edilir ve `NEXUS_URL` sonuna `bch-{namespace}:{imageId}` eklenir (örnek: `https://repomaster.company.com/repository/company-private/v2/mlops/bch-yazi-girisi-model:ald7383jdls8373`). Arayüzde image ID ve isteğin tam URL’si gösterilir. Yanıt 200 ise `exist`, 404 ise `missing`, diğer HTTP durumları veya istek hataları `error` durumudur. Sonuçlar varsayılan olarak 5 dakika cache’lenir; aynı anda yapılan kontroller `REGISTRY_CHECK_CONCURRENCY` ile sınırlanır.
+Nexus kontrolü anonim HTTP GET kullanır; bu sürümde Nexus username/password yoktur. CronWorkflow `spec.workflowSpec` altındaki image adı normalize namespace/proje adını içermiyorsa kontrol edilmez. Eşleşen image değerinin son `:` parçası image ID kabul edilir ve slash ile biten `NEXUS_URL` sonuna `bch-{namespace}/manifests/{imageId}` eklenir (örnek: `https://repomaster.company.com/repository/company-private/v2/mlops/bch-yazi-girisi-model/manifests/ald7383jdls8373`). Arayüzde image ID ve isteğin tam URL’si gösterilir. Yanıt 200 ise `exist`, 404 ise `missing`, diğer HTTP durumları veya istek hataları `error` durumudur. Sonuçlar varsayılan olarak 5 dakika cache’lenir; aynı anda yapılan kontroller `REGISTRY_CHECK_CONCURRENCY` ile sınırlanır.
 
 ## Kubernetes ve Argo erişimi
 

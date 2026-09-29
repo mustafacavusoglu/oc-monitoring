@@ -52,20 +52,21 @@ func BuildViews(snapshot Snapshot, now time.Time) []model.CronWorkflow {
 		view.Timezone, _, _ = unstructured.NestedString(cronWorkflow.Object, "spec", "timezone")
 
 		workflowSpecImages := templateImages(cronWorkflow.Object, "spec", "workflowSpec", "templates")
-		cronImages := append([]string(nil), workflowSpecImages...)
+		projectImages := make([]string, 0, len(workflowSpecImages))
+		for _, image := range workflowSpecImages {
+			if imageBelongsToProject(image, view.Namespace) {
+				projectImages = append(projectImages, image)
+			}
+		}
 		latest := latestWorkflow(workflowsByCron[resourceKey(view.Namespace, view.Name)])
 		if latest != nil {
 			podObjects := podsByWorkflow[resourceKey(view.Namespace, latest.GetName())]
 			run := workflowView(latest, podObjects)
 			view.LastRun = &run
-			cronImages = append(cronImages, templateImages(latest.Object, "spec", "templates")...)
-			for _, pod := range run.Pods {
-				cronImages = append(cronImages, pod.Images...)
-			}
 		}
-		view.Images = imageResults(cronImages)
-		imageIDs := make(map[string]string, len(workflowSpecImages))
-		for _, image := range workflowSpecImages {
+		view.Images = imageResults(projectImages)
+		imageIDs := make(map[string]string, len(projectImages))
+		for _, image := range projectImages {
 			imageIDs[image] = imageIDFromReference(image)
 		}
 		for i := range view.Images {
@@ -86,6 +87,15 @@ func BuildViews(snapshot Snapshot, now time.Time) []model.CronWorkflow {
 		return views[i].Namespace < views[j].Namespace
 	})
 	return views
+}
+
+func imageBelongsToProject(image, namespace string) bool {
+	lastColon := strings.LastIndex(image, ":")
+	lastSlash := strings.LastIndex(image, "/")
+	if lastColon > lastSlash {
+		image = image[:lastColon]
+	}
+	return strings.Contains(strings.ToLower(image), strings.ToLower(namespace))
 }
 
 func imageIDFromReference(image string) string {

@@ -23,7 +23,7 @@ func TestDashboardEndpointReturnsSampleSnapshotAndRegistryHealth(t *testing.T) {
 		"spec": map[string]any{
 			"schedule": "0 12 * * *",
 			"workflowSpec": map[string]any{"templates": []any{
-				map[string]any{"name": "run", "container": map[string]any{"image": "registry.example.test/team/app:v1"}},
+				map[string]any{"name": "run", "container": map[string]any{"image": "registry.example.test/payments/team/app:v1"}},
 			}},
 		},
 	}}
@@ -39,11 +39,11 @@ func TestDashboardEndpointReturnsSampleSnapshotAndRegistryHealth(t *testing.T) {
 			return cluster.Snapshot{CronWorkflows: []*unstructured.Unstructured{cron}, Health: model.SourceHealth{State: "ready"}}
 		},
 		func(_ context.Context, refs []string) map[string]model.ImageResult {
-			if len(refs) != 1 || refs[0] != "bch-payments:v1" {
+			if len(refs) != 1 || refs[0] != "bch-payments/manifests/v1" {
 				t.Fatalf("image refs = %v", refs)
 			}
 			return map[string]model.ImageResult{
-				refs[0]: {Reference: refs[0], URL: "https://nexus.example.test/repository/mlops/bch-payments:v1", Status: "exist", CheckedAt: &checkedAt},
+				refs[0]: {Reference: refs[0], URL: "https://nexus.example.test/repository/mlops/bch-payments/manifests/v1", Status: "exist", CheckedAt: &checkedAt},
 			}
 		},
 	)
@@ -59,7 +59,7 @@ func TestDashboardEndpointReturnsSampleSnapshotAndRegistryHealth(t *testing.T) {
 	if len(response.CronWorkflows) != 1 || response.CronWorkflows[0].Name != "daily-job" {
 		t.Fatalf("dashboard workflows = %#v", response.CronWorkflows)
 	}
-	if len(response.CronWorkflows[0].Images) != 1 || response.CronWorkflows[0].Images[0].ImageID != "v1" || response.CronWorkflows[0].Images[0].URL != "https://nexus.example.test/repository/mlops/bch-payments:v1" || response.CronWorkflows[0].Images[0].Status != "exist" || response.RegistrySource.State != "ready" {
+	if len(response.CronWorkflows[0].Images) != 1 || response.CronWorkflows[0].Images[0].ImageID != "v1" || response.CronWorkflows[0].Images[0].URL != "https://nexus.example.test/repository/mlops/bch-payments/manifests/v1" || response.CronWorkflows[0].Images[0].Status != "exist" || response.RegistrySource.State != "ready" {
 		t.Fatalf("image/source = %#v/%q", response.CronWorkflows[0].Images, response.RegistrySource.State)
 	}
 }

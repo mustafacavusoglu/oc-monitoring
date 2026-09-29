@@ -3,6 +3,7 @@ package registry
 import (
 	"context"
 	"fmt"
+	"log"
 	"net/http"
 	"net/url"
 	"strings"
@@ -128,16 +129,19 @@ func (c *Checker) get(ctx context.Context, imageID string) model.ImageResult {
 		return result
 	}
 	result.URL = requestURL
+	log.Printf("registry image check request: method=GET url=%s", requestURL)
 	requestCtx, cancel := context.WithTimeout(ctx, requestTimeout)
 	defer cancel()
 	req, err := http.NewRequestWithContext(requestCtx, http.MethodGet, requestURL, nil)
 	if err != nil {
 		result.Error = err.Error()
+		log.Printf("registry image check failed: method=GET url=%s error=%q", requestURL, err)
 		return result
 	}
 	resp, err := c.client.Do(req)
 	if err != nil {
 		result.Error = err.Error()
+		log.Printf("registry image check failed: method=GET url=%s error=%q", requestURL, err)
 		return result
 	}
 	resp.Body.Close()
@@ -149,5 +153,6 @@ func (c *Checker) get(ctx context.Context, imageID string) model.ImageResult {
 	default:
 		result.Error = fmt.Sprintf("unexpected HTTP status %d", resp.StatusCode)
 	}
+	log.Printf("registry image check result: url=%s status=%d state=%s", requestURL, resp.StatusCode, result.Status)
 	return result
 }

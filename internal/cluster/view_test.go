@@ -41,11 +41,11 @@ func TestBuildViewsMapsLatestWorkflowPodsAndSchedule(t *testing.T) {
 	images := make([]string, 0, len(view.Images))
 	for _, image := range view.Images {
 		images = append(images, image.Reference)
-		if image.Status != "unknown" {
-			t.Fatalf("unresolved fixture image %q status = %q, want unknown", image.Reference, image.Status)
+		if image.ImageID != "v3" || image.Status != "unknown" {
+			t.Fatalf("unresolved fixture image = %#v, want image ID v3 with unknown status", image)
 		}
 	}
-	wantImages := []string{"(empty image reference)", "registry.example.test/payments/payout:v3"}
+	wantImages := []string{"registry.example.test/payments-bch/payout:v3"}
 	if !reflect.DeepEqual(images, wantImages) {
 		t.Fatalf("images = %v, want %v", images, wantImages)
 	}

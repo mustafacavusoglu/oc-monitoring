@@ -66,7 +66,7 @@ func (h *Handler) snapshot(ctx context.Context) model.DashboardResponse {
 			if image.ImageID == "" {
 				continue
 			}
-			ref := fmt.Sprintf("bch-%s:%s", views[i].Namespace, image.ImageID)
+			ref := fmt.Sprintf("bch-%s/manifests/%s", views[i].Namespace, image.ImageID)
 			images = append(images, ref)
 			if imageRefs[views[i].Namespace] == nil {
 				imageRefs[views[i].Namespace] = make(map[string]string)
