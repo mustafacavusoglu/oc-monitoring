@@ -11,7 +11,6 @@ import (
 type Config struct {
 	HTTPAddr                 string
 	WebDir                   string
-	AzureBaseURL             string
 	AzureRepoURL             string
 	AzureRepoBranch          string
 	AzureProjectsPath        string
@@ -27,7 +26,6 @@ func Load() (Config, error) {
 	cfg := Config{
 		HTTPAddr:          valueOr("HTTP_ADDR", ":8080"),
 		WebDir:            valueOr("WEB_DIR", "web/dist"),
-		AzureBaseURL:      strings.TrimRight(strings.TrimSpace(os.Getenv("AZURE_BASE_URL")), "/"),
 		AzureRepoURL:      strings.TrimSpace(os.Getenv("AZURE_REPO_URL")),
 		AzureRepoBranch:   strings.TrimSpace(os.Getenv("AZURE_REPO_BRANCH")),
 		AzureProjectsPath: strings.TrimSpace(os.Getenv("AZURE_PROJECTS_PATH")),
@@ -35,8 +33,8 @@ func Load() (Config, error) {
 		AzureTokenFile:    strings.TrimSpace(os.Getenv("AZURE_TOKEN_FILE")),
 		NexusURL:          strings.TrimSpace(os.Getenv("NEXUS_URL")),
 	}
-	if cfg.AzureBaseURL == "" || cfg.AzureRepoURL == "" || cfg.AzureRepoBranch == "" || cfg.AzureProjectsPath == "" || cfg.NexusURL == "" {
-		return Config{}, fmt.Errorf("AZURE_BASE_URL, AZURE_REPO_URL, AZURE_REPO_BRANCH, AZURE_PROJECTS_PATH, and NEXUS_URL are required")
+	if cfg.AzureRepoURL == "" || cfg.AzureRepoBranch == "" || cfg.AzureProjectsPath == "" || cfg.NexusURL == "" {
+		return Config{}, fmt.Errorf("AZURE_REPO_URL, AZURE_REPO_BRANCH, AZURE_PROJECTS_PATH, and NEXUS_URL are required")
 	}
 
 	var err error

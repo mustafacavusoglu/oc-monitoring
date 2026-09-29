@@ -4,6 +4,8 @@ import "time"
 
 type ImageResult struct {
 	Reference string     `json:"reference"`
+	ImageID   string     `json:"imageId,omitempty"`
+	URL       string     `json:"url,omitempty"`
 	Status    string     `json:"status"`
 	CheckedAt *time.Time `json:"checkedAt,omitempty"`
 	Error     string     `json:"error,omitempty"`

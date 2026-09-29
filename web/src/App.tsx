@@ -79,7 +79,10 @@ function PodDetails({ pod }: { pod: Pod }) {
 
 function ImageDetails({ image }: { image: ImageResult }) {
   return <div className="image-row">
-    <code title={image.reference}>{image.reference}</code>
+    <div className="image-meta">
+      <strong>Image ID: <code>{image.imageId || '—'}</code></strong>
+      {image.url ? <small className="image-address"><code>{image.url}</code></small> : image.imageId ? null : <small><code>{image.reference}</code></small>}
+    </div>
     <div><StatePill value={image.status} />{image.error ? <small className="detail-error">{image.error}</small> : null}</div>
   </div>
 }

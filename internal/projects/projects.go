@@ -16,15 +16,14 @@ import (
 )
 
 type Snapshot struct {
-	Namespaces  []string
-	ImageIDs    map[string][]string
-	LastSuccess *time.Time
-	Stale       bool
-	Error       string
+	Namespaces      []string
+	ImageNamespaces []string
+	LastSuccess     *time.Time
+	Stale           bool
+	Error           string
 }
 
 type projectTarget struct {
-	ProjectKey  string
 	Namespace   string
 	CheckImages bool
 }
@@ -64,10 +63,7 @@ func (s *Source) Snapshot() Snapshot {
 	defer s.mu.RUnlock()
 	snapshot := s.snapshot
 	snapshot.Namespaces = append([]string(nil), s.snapshot.Namespaces...)
-	snapshot.ImageIDs = make(map[string][]string, len(s.snapshot.ImageIDs))
-	for namespace, imageIDs := range s.snapshot.ImageIDs {
-		snapshot.ImageIDs[namespace] = append([]string(nil), imageIDs...)
-	}
+	snapshot.ImageNamespaces = append([]string(nil), s.snapshot.ImageNamespaces...)
 	if s.snapshot.LastSuccess != nil {
 		lastSuccess := *s.snapshot.LastSuccess
 		snapshot.LastSuccess = &lastSuccess
@@ -83,48 +79,26 @@ func (s *Source) refresh(ctx context.Context) {
 		targets, err = projectTargets(projects)
 		if err == nil {
 			namespaces := make([]string, 0, len(targets))
+			imageNamespaces := make([]string, 0)
 			bchProjects := 0
 			for _, target := range targets {
 				namespaces = append(namespaces, target.Namespace)
 				if target.CheckImages {
 					bchProjects++
+					imageNamespaces = append(imageNamespaces, target.Namespace)
 				}
 			}
-			log.Printf("project source generated namespaces: project_entries=%d namespaces=%q BCH_image_projects=%d", len(projects), namespaces, bchProjects)
-			imageIDs := make(map[string][]string, len(namespaces))
-			var imageErrors []string
-			for _, target := range targets {
-				if !target.CheckImages {
-					continue
-				}
-				imageIDs[target.Namespace], err = s.client.projectImageIDs(ctx, target.ProjectKey)
-				if err != nil {
-					imageErr := fmt.Errorf("read image ID for project %q (namespace %q): %w", target.ProjectKey, target.Namespace, err)
-					log.Printf("project source image lookup failed: %v", imageErr)
-					imageErrors = append(imageErrors, imageErr.Error())
-					delete(imageIDs, target.Namespace)
-					continue
-				}
-				log.Printf("project source loaded image IDs: project=%q namespace=%q count=%d", target.ProjectKey, target.Namespace, len(imageIDs[target.Namespace]))
-			}
+			log.Printf("project source generated namespaces: project_entries=%d namespaces=%q image_namespaces=%q BCH_image_projects=%d", len(projects), namespaces, imageNamespaces, bchProjects)
 			now := time.Now().UTC()
 			s.mu.Lock()
-			s.snapshot = Snapshot{Namespaces: namespaces, ImageIDs: imageIDs, LastSuccess: &now, Stale: len(imageErrors) > 0, Error: strings.Join(imageErrors, "; ")}
+			s.snapshot = Snapshot{Namespaces: namespaces, ImageNamespaces: imageNamespaces, LastSuccess: &now}
 			s.mu.Unlock()
-			log.Printf("project source refresh completed: project_entries=%d namespaces=%d BCH_image_projects=%d image_ids=%d image_errors=%d", len(projects), len(namespaces), bchProjects, countImageIDs(imageIDs), len(imageErrors))
+			log.Printf("project source refresh completed: project_entries=%d namespaces=%d BCH_image_projects=%d", len(projects), len(namespaces), bchProjects)
 			return
 		}
 	}
 
 	s.markStale(err)
-}
-
-func countImageIDs(imageIDs map[string][]string) int {
-	count := 0
-	for _, ids := range imageIDs {
-		count += len(ids)
-	}
-	return count
 }
 
 func (s *Source) markStale(err error) {
@@ -162,7 +136,7 @@ func projectTargets(projects map[string]json.RawMessage) ([]projectTarget, error
 			return nil, fmt.Errorf("project keys %q and %q normalize to the same namespace %q", previous, projectKey, namespace)
 		}
 		seenNamespaces[namespace] = projectKey
-		target := projectTarget{ProjectKey: projectKey, Namespace: namespace}
+		target := projectTarget{Namespace: namespace}
 		typeName := ""
 		if typeRaw := projectField(project, "type"); len(typeRaw) > 0 {
 			if err := json.Unmarshal(typeRaw, &typeName); err != nil {

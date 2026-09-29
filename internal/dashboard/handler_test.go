@@ -30,21 +30,20 @@ func TestDashboardEndpointReturnsSampleSnapshotAndRegistryHealth(t *testing.T) {
 	api := newHandler(
 		func() projects.Snapshot {
 			return projects.Snapshot{
-				Namespaces:  []string{"payments"},
-				ImageIDs:    map[string][]string{"payments": {"ald7383jdls8373", "image-2"}},
-				LastSuccess: &lastSuccess,
+				Namespaces:      []string{"payments"},
+				ImageNamespaces: []string{"payments"},
+				LastSuccess:     &lastSuccess,
 			}
 		},
 		func() cluster.Snapshot {
 			return cluster.Snapshot{CronWorkflows: []*unstructured.Unstructured{cron}, Health: model.SourceHealth{State: "ready"}}
 		},
 		func(_ context.Context, refs []string) map[string]model.ImageResult {
-			if len(refs) != 2 || refs[0] != "bch-payments:ald7383jdls8373" || refs[1] != "bch-payments:image-2" {
+			if len(refs) != 1 || refs[0] != "bch-payments:v1" {
 				t.Fatalf("image refs = %v", refs)
 			}
 			return map[string]model.ImageResult{
-				refs[0]: {Reference: refs[0], Status: "unknown", CheckedAt: &checkedAt, Error: "lookup cancelled"},
-				refs[1]: {Reference: refs[1], Status: "exist", CheckedAt: &checkedAt},
+				refs[0]: {Reference: refs[0], URL: "https://nexus.example.test/repository/mlops/bch-payments:v1", Status: "exist", CheckedAt: &checkedAt},
 			}
 		},
 	)
@@ -60,7 +59,7 @@ func TestDashboardEndpointReturnsSampleSnapshotAndRegistryHealth(t *testing.T) {
 	if len(response.CronWorkflows) != 1 || response.CronWorkflows[0].Name != "daily-job" {
 		t.Fatalf("dashboard workflows = %#v", response.CronWorkflows)
 	}
-	if len(response.CronWorkflows[0].Images) != 2 || response.CronWorkflows[0].Images[0].Status != "unknown" || response.RegistrySource.State != "degraded" {
-		t.Fatalf("image/source status = %q/%q, want unknown/degraded", response.CronWorkflows[0].Images[0].Status, response.RegistrySource.State)
+	if len(response.CronWorkflows[0].Images) != 1 || response.CronWorkflows[0].Images[0].ImageID != "v1" || response.CronWorkflows[0].Images[0].URL != "https://nexus.example.test/repository/mlops/bch-payments:v1" || response.CronWorkflows[0].Images[0].Status != "exist" || response.RegistrySource.State != "ready" {
+		t.Fatalf("image/source = %#v/%q", response.CronWorkflows[0].Images, response.RegistrySource.State)
 	}
 }

@@ -127,6 +127,7 @@ func (c *Checker) get(ctx context.Context, imageID string) model.ImageResult {
 		result.Error = err.Error()
 		return result
 	}
+	result.URL = requestURL
 	requestCtx, cancel := context.WithTimeout(ctx, requestTimeout)
 	defer cancel()
 	req, err := http.NewRequestWithContext(requestCtx, http.MethodGet, requestURL, nil)

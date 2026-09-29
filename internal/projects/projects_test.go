@@ -35,20 +35,3 @@ func TestSelectBCHNamespacesRejectsMalformedServing(t *testing.T) {
 		t.Fatal("expected malformed serving value to be rejected")
 	}
 }
-
-func TestParseProjectImageIDsReadsEveryBatchDeploy(t *testing.T) {
-	values := []byte(`project:
-  batchDeploys:
-    - imageId: ald7383jdls8373
-    - imageId: image-2
-`)
-
-	got, err := parseProjectImageIDs(values)
-	if err != nil {
-		t.Fatal(err)
-	}
-	want := []string{"ald7383jdls8373", "image-2"}
-	if !reflect.DeepEqual(got, want) {
-		t.Fatalf("image IDs = %v, want %v", got, want)
-	}
-}

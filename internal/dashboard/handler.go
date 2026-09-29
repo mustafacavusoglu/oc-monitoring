@@ -52,12 +52,26 @@ func (h *Handler) snapshot(ctx context.Context) model.DashboardResponse {
 	clusterSnapshot := h.clusterSnapshot()
 	views := cluster.BuildViews(clusterSnapshot, now)
 	images := make([]string, 0)
-	imageRefs := make(map[string][]string, len(projectSnapshot.ImageIDs))
-	for project, imageIDs := range projectSnapshot.ImageIDs {
-		for _, imageID := range imageIDs {
-			ref := fmt.Sprintf("bch-%s:%s", project, imageID)
+	imageRefs := make(map[string]map[string]string, len(views))
+	imageNamespaces := make(map[string]struct{}, len(projectSnapshot.ImageNamespaces))
+	for _, namespace := range projectSnapshot.ImageNamespaces {
+		imageNamespaces[namespace] = struct{}{}
+	}
+	for i := range views {
+		if _, eligible := imageNamespaces[views[i].Namespace]; !eligible {
+			continue
+		}
+		for j := range views[i].Images {
+			image := &views[i].Images[j]
+			if image.ImageID == "" {
+				continue
+			}
+			ref := fmt.Sprintf("bch-%s:%s", views[i].Namespace, image.ImageID)
 			images = append(images, ref)
-			imageRefs[project] = append(imageRefs[project], ref)
+			if imageRefs[views[i].Namespace] == nil {
+				imageRefs[views[i].Namespace] = make(map[string]string)
+			}
+			imageRefs[views[i].Namespace][image.Reference] = ref
 		}
 	}
 	imageResults := h.checkImages(ctx, images)
@@ -65,13 +79,20 @@ func (h *Handler) snapshot(ctx context.Context) model.DashboardResponse {
 	failedImages := 0
 	seenFailed := make(map[string]struct{})
 	for i := range views {
-		views[i].Images = make([]model.ImageResult, 0)
-		for _, ref := range imageRefs[views[i].Namespace] {
+		for j := range views[i].Images {
+			image := &views[i].Images[j]
+			ref := imageRefs[views[i].Namespace][image.Reference]
+			if ref == "" {
+				continue
+			}
 			result, found := imageResults[ref]
 			if !found {
 				continue
 			}
-			views[i].Images = append(views[i].Images, result)
+			image.URL = result.URL
+			image.Status = result.Status
+			image.Error = result.Error
+			image.CheckedAt = result.CheckedAt
 			if result.Status == "error" || result.Status == "unknown" {
 				if _, seen := seenFailed[result.Reference]; !seen {
 					seenFailed[result.Reference] = struct{}{}
