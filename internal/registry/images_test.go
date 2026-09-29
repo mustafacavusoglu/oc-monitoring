@@ -47,6 +47,39 @@ func TestCheckLogsRequestURLAndResult(t *testing.T) {
 	}
 }
 
+func TestCheckLogsCachedRequestURLAndResult(t *testing.T) {
+	var logs bytes.Buffer
+	originalWriter := log.Writer()
+	originalFlags := log.Flags()
+	log.SetOutput(&logs)
+	log.SetFlags(0)
+	t.Cleanup(func() {
+		log.SetOutput(originalWriter)
+		log.SetFlags(originalFlags)
+	})
+
+	checker, err := NewChecker("https://repomaster.company.com/repository/company-private/v2/mlops/", time.Minute, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	checker.client.Transport = roundTripperFunc(func(r *http.Request) (*http.Response, error) {
+		return &http.Response{StatusCode: http.StatusNotFound, Body: io.NopCloser(strings.NewReader("")), Header: make(http.Header), Request: r}, nil
+	})
+
+	refs := []string{"bch-payments/manifests/absent"}
+	checker.Check(context.Background(), refs)
+	logs.Reset()
+	checker.Check(context.Background(), refs)
+
+	output := logs.String()
+	if !strings.Contains(output, "https://repomaster.company.com/repository/company-private/v2/mlops/bch-payments/manifests/absent") {
+		t.Fatalf("cached check logs do not include request URL: %q", output)
+	}
+	if !strings.Contains(output, "cache") {
+		t.Fatalf("cached check logs do not identify cache use: %q", output)
+	}
+}
+
 func TestCheckUsesGETAndJoinsImageToBasePath(t *testing.T) {
 	var requests atomic.Int64
 	checker, err := NewChecker("https://nexus.example.test/repository/company-private/v2/mlops/", time.Minute, 1)

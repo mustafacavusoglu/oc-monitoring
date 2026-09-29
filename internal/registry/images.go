@@ -76,6 +76,7 @@ func (c *Checker) Check(ctx context.Context, refs []string) map[string]model.Ima
 }
 
 func (c *Checker) checkOne(ctx context.Context, imageID string) model.ImageResult {
+	requestURL, urlErr := c.requestURL(imageID)
 	for {
 		if err := ctx.Err(); err != nil {
 			return model.ImageResult{Reference: imageID, Status: "unknown", Error: "lookup cancelled"}
@@ -83,6 +84,9 @@ func (c *Checker) checkOne(ctx context.Context, imageID string) model.ImageResul
 		c.mu.Lock()
 		if entry, ok := c.cache[imageID]; ok && time.Now().Before(entry.expiresAt) {
 			c.mu.Unlock()
+			if urlErr == nil {
+				log.Printf("registry image check cache hit: url=%s state=%s", requestURL, entry.result.Status)
+			}
 			return entry.result
 		}
 		if wait, ok := c.inflight[imageID]; ok {
@@ -123,7 +127,7 @@ func (c *Checker) checkOne(ctx context.Context, imageID string) model.ImageResul
 func (c *Checker) get(ctx context.Context, imageID string) model.ImageResult {
 	checkedAt := time.Now().UTC()
 	result := model.ImageResult{Reference: imageID, CheckedAt: &checkedAt, Status: "error"}
-	requestURL, err := url.JoinPath(c.baseURL, imageID)
+	requestURL, err := c.requestURL(imageID)
 	if err != nil {
 		result.Error = err.Error()
 		return result
@@ -155,4 +159,8 @@ func (c *Checker) get(ctx context.Context, imageID string) model.ImageResult {
 	}
 	log.Printf("registry image check result: url=%s status=%d state=%s", requestURL, resp.StatusCode, result.Status)
 	return result
+}
+
+func (c *Checker) requestURL(imageID string) (string, error) {
+	return url.JoinPath(c.baseURL, imageID)
 }
