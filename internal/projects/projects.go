@@ -72,9 +72,16 @@ func (s *Source) Snapshot() Snapshot {
 func (s *Source) refresh(ctx context.Context) {
 	projects, err := s.client.projects(ctx)
 	if err == nil {
+		log.Printf("project source fetched project metadata: entries=%d", len(projects))
 		var namespaces []string
 		namespaces, err = selectBCHNamespaces(projects)
 		if err == nil {
+			if len(namespaces) == 0 {
+				log.Printf("project source selected no BCH namespaces; inspecting project keys and serving values")
+				logEmptyNamespaceSelection(projects)
+			} else {
+				log.Printf("project source selected BCH namespaces: count=%d namespaces=%q", len(namespaces), namespaces)
+			}
 			imageIDs := make(map[string][]string, len(namespaces))
 			for _, namespace := range namespaces {
 				imageIDs[namespace], err = s.client.projectImageIDs(ctx, namespace)
@@ -82,6 +89,7 @@ func (s *Source) refresh(ctx context.Context) {
 					err = fmt.Errorf("read image ID for namespace %q: %w", namespace, err)
 					break
 				}
+				log.Printf("project source loaded image IDs: namespace=%q count=%d", namespace, len(imageIDs[namespace]))
 			}
 			if err != nil {
 				s.markStale(err)
@@ -91,11 +99,38 @@ func (s *Source) refresh(ctx context.Context) {
 			s.mu.Lock()
 			s.snapshot = Snapshot{Namespaces: namespaces, ImageIDs: imageIDs, LastSuccess: &now}
 			s.mu.Unlock()
+			log.Printf("project source refresh succeeded: project entries=%d namespaces=%d image IDs=%d", len(projects), len(namespaces), countImageIDs(imageIDs))
 			return
 		}
 	}
 
 	s.markStale(err)
+}
+
+func logEmptyNamespaceSelection(projects map[string]json.RawMessage) {
+	keys := make([]string, 0, len(projects))
+	for key := range projects {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	for _, key := range keys {
+		var project struct {
+			Serving []string `json:"serving"`
+		}
+		if err := json.Unmarshal(projects[key], &project); err != nil {
+			log.Printf("project source namespace candidate: key=%q metadata parse error=%v", key, err)
+			continue
+		}
+		log.Printf("project source namespace candidate: key=%q serving=%q", key, project.Serving)
+	}
+}
+
+func countImageIDs(imageIDs map[string][]string) int {
+	count := 0
+	for _, ids := range imageIDs {
+		count += len(ids)
+	}
+	return count
 }
 
 func (s *Source) markStale(err error) {
