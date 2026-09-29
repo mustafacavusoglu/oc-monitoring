@@ -1,6 +1,6 @@
 # OpenShift Argo CronWorkflow Dashboard
 
-OpenShift içinde çalışan servis, Azure Repos’taki proje JSON’unda `serving` listesinde `BCH` olan key’leri namespace/proje adı olarak kullanır. Her key için `Projects/MainProjects/values.yaml` dosyasındaki `batchDeploys.imageId` değerini okur ve `NEXUS_URL/{imageId}` adresine GET atar. Yalnızca HTTP 200 image’ı mevcut gösterir; diğer HTTP durumları mevcut değil olarak gösterilir. Argo `CronWorkflow` ve `Workflow` kaynaklarıyla ilişkili pod’lar informer cache üzerinden izlenir.
+OpenShift içinde çalışan servis, Azure Repos’taki proje JSON’unda `serving` listesinde `BCH` olan key’leri namespace/proje adı olarak kullanır. Her key için `Projects/MainProjects/values.yaml` dosyasındaki `project.batchDeploys[].imageId` değerlerini okur ve her biri için `NEXUS_URL/mlops/bch-{project}:{imageId}` adresine GET atar. Yalnızca HTTP 200 image’ı mevcut gösterir; diğer HTTP durumları mevcut değil olarak gösterilir. Argo `CronWorkflow` ve `Workflow` kaynaklarıyla ilişkili pod’lar informer cache üzerinden izlenir.
 
 ## Geliştirme ve container oluşturma
 
@@ -28,7 +28,7 @@ Container, `:8080` portunda API ve arayüzü aynı origin üzerinden sunar. `/he
 
 `deploy/openshift.yaml` içindeki `cronworkflow-dashboard-config` ConfigMap’ini kurumunuzun değerleriyle güncelleyin. `AZURE_BASE_URL` sonuna namespace key ve `/Projects/MainProjects/values.yaml` eklenerek values dosyasına GET atılır. `AZURE_REPO_URL`, branch ve path proje JSON’unu almak içindir. `NEXUS_URL` image ID’nin ekleneceği temel URL’dir. Diğer servis ayarları da ConfigMap’ten `envFrom` ile alınır. Namespace varsayılanı `workflow-monitoring`.
 
-Deployment, Docker Hub’daki `mustafa12/monitor:0.0.1` image’ını kullanır. Uygulamanın kontrol ettiği Nexus endpoint’i ayrı `NEXUS_URL` ConfigMap ayarıdır; image dağıtım registry’siyle karıştırılmamalıdır.
+Deployment, Docker Hub’daki `mustafa12/monitor:0.0.2` image’ını kullanır. Uygulamanın kontrol ettiği Nexus endpoint’i ayrı `NEXUS_URL` ConfigMap ayarıdır; image dağıtım registry’siyle karıştırılmamalıdır.
 
 ```sh
 oc apply -f deploy/openshift.yaml
@@ -63,7 +63,7 @@ oc create secret generic cronworkflow-dashboard-secrets \
 
 Azure DevOps erişimi gerekiyorsa ilgili token’a repo içeriğini okuma yetkisi verin. PAT’in Secret key’i `AZURE_TOKEN` olmalıdır. Pod’a Secret’tan ortam değişkeni olarak aktarılır; loglanmaz.
 
-Nexus kontrolü anonim HTTP GET kullanır; bu sürümde Nexus username/password yoktur. `NEXUS_URL` ve `batchDeploys.imageId` birleştirilir. Yanıt 200 ise `present`, diğer yanıtlar `missing` durumudur. Sonuçlar varsayılan olarak 5 dakika cache’lenir; aynı anda yapılan kontroller `REGISTRY_CHECK_CONCURRENCY` ile sınırlanır.
+Nexus kontrolü anonim HTTP GET kullanır; bu sürümde Nexus username/password yoktur. YAML’deki her `project.batchDeploys[].imageId`, proje key’iyle `mlops/bch-{project}:{imageId}` referansına dönüştürülüp `NEXUS_URL` sonuna eklenir. Yanıt 200 ise `present`, diğer yanıtlar `missing` durumudur. Sonuçlar varsayılan olarak 5 dakika cache’lenir; aynı anda yapılan kontroller `REGISTRY_CHECK_CONCURRENCY` ile sınırlanır.
 
 ## Kubernetes ve Argo erişimi
 

@@ -52,8 +52,13 @@ func (h *Handler) snapshot(ctx context.Context) model.DashboardResponse {
 	clusterSnapshot := h.clusterSnapshot()
 	views := cluster.BuildViews(clusterSnapshot, now)
 	images := make([]string, 0)
-	for _, imageID := range projectSnapshot.ImageIDs {
-		images = append(images, imageID)
+	imageRefs := make(map[string][]string, len(projectSnapshot.ImageIDs))
+	for project, imageIDs := range projectSnapshot.ImageIDs {
+		for _, imageID := range imageIDs {
+			ref := fmt.Sprintf("mlops/bch-%s:%s", project, imageID)
+			images = append(images, ref)
+			imageRefs[project] = append(imageRefs[project], ref)
+		}
 	}
 	imageResults := h.checkImages(ctx, images)
 	registryHealth := model.SourceHealth{State: "ready"}
@@ -61,9 +66,12 @@ func (h *Handler) snapshot(ctx context.Context) model.DashboardResponse {
 	seenUnknown := make(map[string]struct{})
 	for i := range views {
 		views[i].Images = nil
-		imageID := projectSnapshot.ImageIDs[views[i].Namespace]
-		if result, found := imageResults[imageID]; found {
-			views[i].Images = []model.ImageResult{result}
+		for _, ref := range imageRefs[views[i].Namespace] {
+			result, found := imageResults[ref]
+			if !found {
+				continue
+			}
+			views[i].Images = append(views[i].Images, result)
 			if result.Status == "unknown" {
 				if _, seen := seenUnknown[result.Reference]; !seen {
 					seenUnknown[result.Reference] = struct{}{}

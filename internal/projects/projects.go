@@ -16,7 +16,7 @@ import (
 
 type Snapshot struct {
 	Namespaces  []string
-	ImageIDs    map[string]string
+	ImageIDs    map[string][]string
 	LastSuccess *time.Time
 	Stale       bool
 	Error       string
@@ -57,9 +57,9 @@ func (s *Source) Snapshot() Snapshot {
 	defer s.mu.RUnlock()
 	snapshot := s.snapshot
 	snapshot.Namespaces = append([]string(nil), s.snapshot.Namespaces...)
-	snapshot.ImageIDs = make(map[string]string, len(s.snapshot.ImageIDs))
-	for namespace, imageID := range s.snapshot.ImageIDs {
-		snapshot.ImageIDs[namespace] = imageID
+	snapshot.ImageIDs = make(map[string][]string, len(s.snapshot.ImageIDs))
+	for namespace, imageIDs := range s.snapshot.ImageIDs {
+		snapshot.ImageIDs[namespace] = append([]string(nil), imageIDs...)
 	}
 	if s.snapshot.LastSuccess != nil {
 		lastSuccess := *s.snapshot.LastSuccess
@@ -74,9 +74,9 @@ func (s *Source) refresh(ctx context.Context) {
 		var namespaces []string
 		namespaces, err = selectBCHNamespaces(projects)
 		if err == nil {
-			imageIDs := make(map[string]string, len(namespaces))
+			imageIDs := make(map[string][]string, len(namespaces))
 			for _, namespace := range namespaces {
-				imageIDs[namespace], err = s.client.projectImageID(ctx, namespace)
+				imageIDs[namespace], err = s.client.projectImageIDs(ctx, namespace)
 				if err != nil {
 					err = fmt.Errorf("read image ID for namespace %q: %w", namespace, err)
 					break

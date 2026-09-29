@@ -87,48 +87,59 @@ func (c *azureClient) projects(ctx context.Context) (map[string]json.RawMessage,
 	return projects, nil
 }
 
-func (c *azureClient) projectImageID(ctx context.Context, project string) (string, error) {
+func (c *azureClient) projectImageIDs(ctx context.Context, project string) ([]string, error) {
 	requestURL, err := url.JoinPath(c.baseURL, project, "Projects", "MainProjects", "values.yaml")
 	if err != nil {
-		return "", fmt.Errorf("build project values URL: %w", err)
+		return nil, fmt.Errorf("build project values URL: %w", err)
 	}
 	requestCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
 	defer cancel()
 	req, err := http.NewRequestWithContext(requestCtx, http.MethodGet, requestURL, nil)
 	if err != nil {
-		return "", fmt.Errorf("create Azure values request: %w", err)
+		return nil, fmt.Errorf("create Azure values request: %w", err)
 	}
 	if err := c.authorize(req); err != nil {
-		return "", err
+		return nil, err
 	}
 	resp, err := c.http.Do(req)
 	if err != nil {
-		return "", fmt.Errorf("fetch project values from Azure: %w", err)
+		return nil, fmt.Errorf("fetch project values from Azure: %w", err)
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
-		return "", fmt.Errorf("fetch project values from Azure: HTTP %d", resp.StatusCode)
+		return nil, fmt.Errorf("fetch project values from Azure: HTTP %d", resp.StatusCode)
 	}
 	body, err := io.ReadAll(io.LimitReader(resp.Body, maxProjectFileSize+1))
 	if err != nil {
-		return "", fmt.Errorf("read project values from Azure: %w", err)
+		return nil, fmt.Errorf("read project values from Azure: %w", err)
 	}
 	if len(body) > maxProjectFileSize {
-		return "", fmt.Errorf("project values exceed %d bytes", maxProjectFileSize)
+		return nil, fmt.Errorf("project values exceed %d bytes", maxProjectFileSize)
 	}
+	return parseProjectImageIDs(body)
+}
+
+func parseProjectImageIDs(body []byte) ([]string, error) {
 	var values struct {
-		BatchDeploys struct {
-			ImageID string `json:"imageId"`
-		} `json:"batchDeploys"`
+		Project struct {
+			BatchDeploys []struct {
+				ImageID string `json:"imageId"`
+			} `json:"batchDeploys"`
+		} `json:"project"`
 	}
 	if err := yaml.Unmarshal(body, &values); err != nil {
-		return "", fmt.Errorf("parse project values YAML: %w", err)
+		return nil, fmt.Errorf("parse project values YAML: %w", err)
 	}
-	imageID := strings.TrimSpace(values.BatchDeploys.ImageID)
-	if imageID == "" {
-		return "", fmt.Errorf("batchDeploys.imageId is empty")
+	imageIDs := make([]string, 0, len(values.Project.BatchDeploys))
+	for _, deploy := range values.Project.BatchDeploys {
+		if imageID := strings.TrimSpace(deploy.ImageID); imageID != "" {
+			imageIDs = append(imageIDs, imageID)
+		}
 	}
-	return imageID, nil
+	if len(imageIDs) == 0 {
+		return nil, fmt.Errorf("project.batchDeploys contains no imageId values")
+	}
+	return imageIDs, nil
 }
 
 func (c *azureClient) authorize(req *http.Request) error {

@@ -2,35 +2,41 @@ package registry
 
 import (
 	"context"
+	"fmt"
+	"io"
 	"net/http"
-	"net/http/httptest"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
 )
 
+type roundTripperFunc func(*http.Request) (*http.Response, error)
+
+func (f roundTripperFunc) RoundTrip(req *http.Request) (*http.Response, error) { return f(req) }
+
 func TestCheckUsesGETAndOnlyHTTP200MeansPresent(t *testing.T) {
 	var requests atomic.Int64
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		requests.Add(1)
-		if r.Method != http.MethodGet {
-			t.Errorf("method = %s, want GET", r.Method)
-		}
-		if r.URL.Path == "/exists" {
-			w.WriteHeader(http.StatusOK)
-			return
-		}
-		w.WriteHeader(http.StatusNotFound)
-	}))
-	defer server.Close()
-
-	checker, err := NewChecker(server.URL, time.Minute, 1)
+	checker, err := NewChecker("https://nexus.example.test/repository/docker-hosted", time.Minute, 1)
 	if err != nil {
 		t.Fatal(err)
 	}
-	refs := []string{"exists", "absent"}
+	checker.client.Transport = roundTripperFunc(func(r *http.Request) (*http.Response, error) {
+		requests.Add(1)
+		if r.Method != http.MethodGet {
+			return nil, fmt.Errorf("method = %s, want GET", r.Method)
+		}
+		status := http.StatusNotFound
+		if r.URL.Path == "/repository/docker-hosted/mlops/bch-payments:exists" {
+			status = http.StatusOK
+		} else if r.URL.Path != "/repository/docker-hosted/mlops/bch-payments:absent" {
+			return nil, fmt.Errorf("unexpected request path: %s", r.URL.Path)
+		}
+		return &http.Response{StatusCode: status, Body: io.NopCloser(strings.NewReader("")), Header: make(http.Header), Request: r}, nil
+	})
+	refs := []string{"mlops/bch-payments:exists", "mlops/bch-payments:absent"}
 	results := checker.Check(context.Background(), refs)
-	if results["exists"].Status != "present" || results["absent"].Status != "missing" {
+	if results[refs[0]].Status != "present" || results[refs[1]].Status != "missing" {
 		t.Fatalf("results = %#v", results)
 	}
 	requestsAfterFirstCheck := requests.Load()
