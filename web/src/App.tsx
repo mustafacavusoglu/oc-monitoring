@@ -129,6 +129,7 @@ export default function App() {
   }, [refresh])
 
   const workflows = dashboard?.cronWorkflows || []
+  const namespaces = dashboard?.namespaces || []
   const summary = useMemo(() => ({
     total: workflows.length,
     running: workflows.filter((item) => item.active || item.lastRun?.phase.toLowerCase() === 'running').length,
@@ -188,7 +189,7 @@ export default function App() {
         <div className="section-heading"><div><h2>CronWorkflow’lar</h2><span>{visibleWorkflows.length} kayıt</span></div>
           <div className="filters">
             <label>Namespace <select value={namespace} onChange={(event) => setNamespace(event.target.value)}>
-              <option value="all">Tüm namespace’ler</option>{dashboard.namespaces.map((item) => <option key={item} value={item}>{item}</option>)}
+              <option value="all">Tüm namespace’ler</option>{namespaces.map((item) => <option key={item} value={item}>{item}</option>)}
             </select></label>
             <label>Son çalışma <select value={runFilter} onChange={(event) => setRunFilter(event.target.value)}>
               <option value="all">Tümü</option><option value="running">Çalışıyor</option><option value="succeeded">Başarılı</option><option value="failed">Başarısız / hata</option><option value="pending">Bekliyor</option><option value="unavailable">Veri yok</option>

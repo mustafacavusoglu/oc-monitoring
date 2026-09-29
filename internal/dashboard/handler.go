@@ -65,7 +65,7 @@ func (h *Handler) snapshot(ctx context.Context) model.DashboardResponse {
 	unknownImages := 0
 	seenUnknown := make(map[string]struct{})
 	for i := range views {
-		views[i].Images = nil
+		views[i].Images = make([]model.ImageResult, 0)
 		for _, ref := range imageRefs[views[i].Namespace] {
 			result, found := imageResults[ref]
 			if !found {
@@ -93,7 +93,7 @@ func (h *Handler) snapshot(ctx context.Context) model.DashboardResponse {
 		projectHealth.State = "degraded"
 		projectHealth.Error = projectSnapshot.Error
 	}
-	namespaces := append([]string(nil), projectSnapshot.Namespaces...)
+	namespaces := append([]string{}, projectSnapshot.Namespaces...)
 	sort.Strings(namespaces)
 	return model.DashboardResponse{
 		GeneratedAt:    now,
