@@ -1,6 +1,6 @@
 # OpenShift Argo CronWorkflow Dashboard
 
-OpenShift içinde çalışan servis, Azure Repos’taki her proje JSON key’inden namespace üretir: key küçük harfe çevrilir ve `_` karakterleri `-` olur. Yalnızca `Type` değeri `CustomServe` olan ve `serving` listesinde harf duyarsız `bch` eşleşmesi bulunan projelerin namespace’leri izlenir. CronWorkflow `spec.workflowSpec` altındaki image’lardan yalnızca adı namespace/proje adını içerenler seçilir; image ID son `:` parçasından alınır ve `NEXUS_URL/bch-{namespace}/manifests/{imageId}` adresine GET atılır. HTTP 200 `exist`, 404 `missing`, diğer HTTP durumları veya bağlantı hataları `error` gösterir. Argo `CronWorkflow` ve `Workflow` kaynaklarıyla ilişkili pod’lar informer cache üzerinden izlenir.
+OpenShift içinde çalışan servis, Azure Repos’taki yalnızca `Type` değeri `CustomServe` olan ve `serving` listesinde harf duyarsız `bch` eşleşmesi bulunan projelerin JSON key’lerinden namespace üretir: key küçük harfe çevrilir ve `_` karakterleri `-` olur. Yalnızca bu namespace’ler izlenir. CronWorkflow `spec.workflowSpec` altındaki image’lardan yalnızca adı namespace/proje adını içerenler seçilir; image ID son `:` parçasından alınır ve `NEXUS_URL/bch-{namespace}/manifests/{imageId}` adresine GET atılır. HTTP 200 `exist`, 404 `missing`, diğer HTTP durumları veya bağlantı hataları `error` gösterir. Argo `CronWorkflow` ve `Workflow` kaynaklarıyla ilişkili pod’lar informer cache üzerinden izlenir.
 
 ## Geliştirme ve container oluşturma
 
@@ -28,7 +28,7 @@ Container, `:8080` portunda API ve arayüzü aynı origin üzerinden sunar. `/he
 
 `deploy/openshift.yaml` içindeki `cronworkflow-dashboard-config` ConfigMap’ini kurumunuzun değerleriyle güncelleyin. `AZURE_REPO_URL`, branch ve path proje JSON’unu almak içindir. `NEXUS_URL`, CronWorkflow image tag’inden çıkarılan ID’nin ekleneceği temel URL’dir. Diğer servis ayarları da ConfigMap’ten `envFrom` ile alınır. Namespace varsayılanı `workflow-monitoring`.
 
-Deployment, amd64 ve arm64 platformlarını içeren Docker Hub’daki `mustafa12/monitor:0.0.18` image’ını kullanır. Uygulamanın kontrol ettiği Nexus endpoint’i ayrı `NEXUS_URL` ConfigMap ayarıdır; image dağıtım registry’siyle karıştırılmamalıdır.
+Deployment, amd64 ve arm64 platformlarını içeren Docker Hub’daki `mustafa12/monitor:0.0.19` image’ını kullanır. Uygulamanın kontrol ettiği Nexus endpoint’i ayrı `NEXUS_URL` ConfigMap ayarıdır; image dağıtım registry’siyle karıştırılmamalıdır.
 
 ```sh
 oc apply -f deploy/openshift.yaml

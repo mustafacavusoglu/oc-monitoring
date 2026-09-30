@@ -46,60 +46,34 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-func statusRank(status string) int {
-	switch status {
-	case "exist":
-		return 0
-	case "checking":
-		return 1
-	case "error":
-		return 2
-	case "unknown":
-		return 3
-	default:
-		return 4
-	}
-
-}
-
-func combinedResults(refs []string, results map[string]model.ImageResult) (model.ImageResult, bool) {
-	var best model.ImageResult
-	found := false
-	for _, ref := range refs {
-		result, ok := results[ref]
-		if !ok {
-			continue
-		}
-		if !found || statusRank(result.Status) > statusRank(best.Status) {
-			best = result
-			found = true
-		}
-	}
-	return best, found
-}
-
-
-
 func (h *Handler) snapshot(ctx context.Context) model.DashboardResponse {
 	now := time.Now().UTC()
 	projectSnapshot := h.projectSnapshot()
 	clusterSnapshot := h.clusterSnapshot()
 	views := cluster.BuildViews(clusterSnapshot, now)
+	allowed := make(map[string]struct{}, len(projectSnapshot.Namespaces))
+	for _, namespace := range projectSnapshot.Namespaces {
+		allowed[namespace] = struct{}{}
+	}
+	filtered := views[:0]
+	for _, view := range views {
+		if _, ok := allowed[view.Namespace]; ok {
+			filtered = append(filtered, view)
+		}
+	}
+	views = filtered
 	images := make([]string, 0)
-	imageRefs := make(map[string]map[string][]string, len(views))
+	imageRefs := make(map[string]map[string]string, len(views))
 	for i := range views {
 		for j := range views[i].Images {
 			image := &views[i].Images[j]
 			if image.ImageID == "" {
 				continue
 			}
-			ref := []string{
-				fmt.Sprintf("bch-%s/manifests/%s", views[i].Namespace, image.ImageID),
-				fmt.Sprintf("cm-%s/manifests/%s", views[i].Namespace, image.ImageID),
-			}
-			images = append(images, ref...)
+			ref := fmt.Sprintf("bch-%s/manifests/%s", views[i].Namespace, image.ImageID)
+			images = append(images, ref)
 			if imageRefs[views[i].Namespace] == nil {
-				imageRefs[views[i].Namespace] = make(map[string][]string)
+				imageRefs[views[i].Namespace] = make(map[string]string)
 			}
 			imageRefs[views[i].Namespace][image.Reference] = ref
 		}
@@ -112,10 +86,10 @@ func (h *Handler) snapshot(ctx context.Context) model.DashboardResponse {
 		for j := range views[i].Images {
 			image := &views[i].Images[j]
 			ref := imageRefs[views[i].Namespace][image.Reference]
-			if len(ref) == 0 {
+			if ref == "" {
 				continue
 			}
-			result, found := combinedResults(ref, imageResults)
+			result, found := imageResults[ref]
 			if !found {
 				continue
 			}

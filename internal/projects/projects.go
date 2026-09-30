@@ -16,11 +16,10 @@ import (
 )
 
 type Snapshot struct {
-	Namespaces      []string
-	ImageNamespaces []string
-	LastSuccess     *time.Time
-	Stale           bool
-	Error           string
+	Namespaces  []string
+	LastSuccess *time.Time
+	Stale       bool
+	Error       string
 }
 
 type projectTarget struct {
@@ -63,7 +62,6 @@ func (s *Source) Snapshot() Snapshot {
 	defer s.mu.RUnlock()
 	snapshot := s.snapshot
 	snapshot.Namespaces = append([]string(nil), s.snapshot.Namespaces...)
-	snapshot.ImageNamespaces = append([]string(nil), s.snapshot.ImageNamespaces...)
 	if s.snapshot.LastSuccess != nil {
 		lastSuccess := *s.snapshot.LastSuccess
 		snapshot.LastSuccess = &lastSuccess
@@ -75,25 +73,15 @@ func (s *Source) refresh(ctx context.Context) {
 	projects, err := s.client.projects(ctx)
 	if err == nil {
 		log.Printf("project source fetched project metadata: entries=%d", len(projects))
-		var targets []projectTarget
-		targets, err = projectTargets(projects)
+		var namespaces []string
+		namespaces, err = selectBCHNamespaces(projects)
 		if err == nil {
-			namespaces := make([]string, 0, len(targets))
-			imageNamespaces := make([]string, 0)
-			bchProjects := 0
-			for _, target := range targets {
-				namespaces = append(namespaces, target.Namespace)
-				if target.CheckImages {
-					bchProjects++
-					imageNamespaces = append(imageNamespaces, target.Namespace)
-				}
-			}
-			log.Printf("project source generated namespaces: project_entries=%d namespaces=%q image_namespaces=%q BCH_image_projects=%d", len(projects), namespaces, imageNamespaces, bchProjects)
+			log.Printf("project source generated BCH namespaces: project_entries=%d namespaces=%q", len(projects), namespaces)
 			now := time.Now().UTC()
 			s.mu.Lock()
-			s.snapshot = Snapshot{Namespaces: namespaces, ImageNamespaces: imageNamespaces, LastSuccess: &now}
+			s.snapshot = Snapshot{Namespaces: namespaces, LastSuccess: &now}
 			s.mu.Unlock()
-			log.Printf("project source refresh completed: project_entries=%d namespaces=%d BCH_image_projects=%d", len(projects), len(namespaces), bchProjects)
+			log.Printf("project source refresh completed: project_entries=%d BCH_namespaces=%d", len(projects), len(namespaces))
 			return
 		}
 	}
