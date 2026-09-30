@@ -41,7 +41,7 @@ func Load() (Config, error) {
 	if cfg.ProjectRefreshInterval, err = durationOr("PROJECT_REFRESH_INTERVAL", 5*time.Minute); err != nil {
 		return Config{}, err
 	}
-	if cfg.ImageCacheTTL, err = durationOr("IMAGE_CACHE_TTL", 5*time.Minute); err != nil {
+	if cfg.ImageCacheTTL, err = durationOr("IMAGE_CACHE_TTL", 24*time.Hour); err != nil {
 		return Config{}, err
 	}
 	cfg.RegistryCheckConcurrency, err = intOr("REGISTRY_CHECK_CONCURRENCY", 4)

@@ -15,7 +15,7 @@ data:
   AZURE_REPO_BRANCH: main
   AZURE_PROJECTS_PATH: /path/to/project.json
   PROJECT_REFRESH_INTERVAL: 5m
-  IMAGE_CACHE_TTL: 5m
+  IMAGE_CACHE_TTL: 24h
   REGISTRY_CHECK_CONCURRENCY: "4"
   NEXUS_URL: https://repomaster.company.com/repository/company-private/v2/mlops/
 ---
@@ -86,7 +86,7 @@ spec:
           type: RuntimeDefault
       containers:
         - name: dashboard
-          image: mustafa12/monitor:0.0.17
+          image: mustafa12/monitor:0.0.18
           imagePullPolicy: IfNotPresent
           envFrom:
             - configMapRef:

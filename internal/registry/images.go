@@ -4,7 +4,7 @@ import (
 	"context"
 	"fmt"
 	"io"
-	"log"
+	"log/slog"
 	"net/http"
 	"net/url"
 	"strings"
@@ -16,10 +16,6 @@ import (
 
 const (
 	requestTimeout = 10 * time.Second
-
-
-	negativeTTL = 30 * time.Second
-	
 	manifestAccept = "application/vnd.docker.distribution.manifest.v2+json, " +
 		"application/vnd.docker.distribution.manifest.list.v2+json, " +
 		"application/vnd.oci.image.manifest.v1+json, " +
@@ -62,11 +58,10 @@ func NewChecker(baseURL string, ttl time.Duration, maxConcurrent int) (*Checker,
 	}, nil
 }
 
-
-
 func (c *Checker) Lookup(ctx context.Context, refs []string) map[string]model.ImageResult {
 	background := context.WithoutCancel(ctx)
 	results := make(map[string]model.ImageResult, len(refs))
+	started, cacheHits, inFlight := 0, 0, 0
 	now := time.Now()
 	for _, ref := range refs {
 		if _, done := results[ref]; done {
@@ -76,6 +71,13 @@ func (c *Checker) Lookup(ctx context.Context, refs []string) map[string]model.Im
 		entry, cached := c.cache[ref]
 		_, running := c.inflight[ref]
 		start := (!cached || !now.Before(entry.expiresAt)) && !running
+		if start {
+			started++
+		} else if cached && now.Before(entry.expiresAt) {
+			cacheHits++
+		} else {
+			inFlight++
+		}
 		if start {
 			c.inflight[ref] = make(chan struct{})
 		}
@@ -91,6 +93,7 @@ func (c *Checker) Lookup(ctx context.Context, refs []string) map[string]model.Im
 		}
 
 	}
+	slog.Info("registry image check cycle", "references", len(results), "started", started, "cache_hits", cacheHits, "in_flight", inFlight)
 	return results
 }
 
@@ -99,24 +102,13 @@ func (c *Checker) refresh(ctx context.Context, imageID string) {
 	result := c.get(ctx, imageID)
 	<-c.slots
 	c.mu.Lock()
-	c.cache[imageID] = cacheEntry{result: result, expiresAt: time.Now().Add(c.ttlFor(result))}
+	c.cache[imageID] = cacheEntry{result: result, expiresAt: time.Now().Add(c.ttl)}
 	if wait, ok := c.inflight[imageID]; ok {
 		delete(c.inflight, imageID)
 		close(wait)
 	}
 	c.mu.Unlock()
 }
-
-func (c *Checker) ttlFor(result model.ImageResult) time.Duration {
-	if result.Status == "exist" {
-		return c.ttl
-	}
-	return negativeTTL
-}
-
-
-
-
 
 func (c *Checker) Check(ctx context.Context, refs []string) map[string]model.ImageResult {
 	results := make(map[string]model.ImageResult, len(refs))
@@ -154,7 +146,7 @@ func (c *Checker) checkOne(ctx context.Context, imageID string) model.ImageResul
 		if entry, ok := c.cache[imageID]; ok && time.Now().Before(entry.expiresAt) {
 			c.mu.Unlock()
 			if urlErr == nil {
-				log.Printf("registry image check cache hit: url=%s state=%s", requestURL, entry.result.Status)
+				slog.Info("registry image check cache hit", "url", requestURL, "state", entry.result.Status)
 			}
 			return entry.result
 		}
@@ -184,7 +176,7 @@ func (c *Checker) checkOne(ctx context.Context, imageID string) model.ImageResul
 		<-c.slots
 		c.mu.Lock()
 		if ctx.Err() == nil {
-			c.cache[imageID] = cacheEntry{result: result, expiresAt: time.Now().Add(c.ttlFor(result))}
+			c.cache[imageID] = cacheEntry{result: result, expiresAt: time.Now().Add(c.ttl)}
 		}
 		delete(c.inflight, imageID)
 		close(wait)
@@ -199,26 +191,27 @@ func (c *Checker) get(ctx context.Context, imageID string) model.ImageResult {
 	requestURL, err := c.requestURL(imageID)
 	if err != nil {
 		result.Error = err.Error()
+		slog.Info("registry image check failed", "reference", imageID, "error", err)
 		return result
 	}
 	result.URL = requestURL
-	log.Printf("registry image check request: method=GET url=%s", requestURL)
+	slog.Info("registry image check request", "method", http.MethodGet, "url", requestURL)
 	requestCtx, cancel := context.WithTimeout(ctx, requestTimeout)
 	defer cancel()
 	req, err := http.NewRequestWithContext(requestCtx, http.MethodGet, requestURL, nil)
 	if err != nil {
 		result.Error = err.Error()
-		log.Printf("registry image check failed: method=GET url=%s error=%q", requestURL, err)
+		slog.Info("registry image check failed", "method", http.MethodGet, "url", requestURL, "error", err)
 		return result
 	}
 	req.Header.Set("Accept", manifestAccept)
 	resp, err := c.client.Do(req)
 	if err != nil {
 		result.Error = err.Error()
-		log.Printf("registry image check failed: method=GET url=%s error=%q", requestURL, err)
+		slog.Info("registry image check failed", "method", http.MethodGet, "url", requestURL, "error", err)
 		return result
 	}
-	_,_ = io.Copy(io.Discard, io.LimitReader(resp.Body, 1<<20))
+	_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 1<<20))
 	resp.Body.Close()
 	switch resp.StatusCode {
 	case http.StatusOK:
@@ -228,7 +221,7 @@ func (c *Checker) get(ctx context.Context, imageID string) model.ImageResult {
 	default:
 		result.Error = fmt.Sprintf("unexpected HTTP status %d", resp.StatusCode)
 	}
-	log.Printf("registry image check result: url=%s status=%d state=%s", requestURL, resp.StatusCode, result.Status)
+	slog.Info("registry image check result", "url", requestURL, "status", resp.StatusCode, "state", result.Status)
 	return result
 }
 

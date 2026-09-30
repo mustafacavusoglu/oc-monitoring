@@ -28,7 +28,7 @@ Container, `:8080` portunda API ve arayüzü aynı origin üzerinden sunar. `/he
 
 `deploy/openshift.yaml` içindeki `cronworkflow-dashboard-config` ConfigMap’ini kurumunuzun değerleriyle güncelleyin. `AZURE_REPO_URL`, branch ve path proje JSON’unu almak içindir. `NEXUS_URL`, CronWorkflow image tag’inden çıkarılan ID’nin ekleneceği temel URL’dir. Diğer servis ayarları da ConfigMap’ten `envFrom` ile alınır. Namespace varsayılanı `workflow-monitoring`.
 
-Deployment, amd64 ve arm64 platformlarını içeren Docker Hub’daki `mustafa12/monitor:0.0.17` image’ını kullanır. Uygulamanın kontrol ettiği Nexus endpoint’i ayrı `NEXUS_URL` ConfigMap ayarıdır; image dağıtım registry’siyle karıştırılmamalıdır.
+Deployment, amd64 ve arm64 platformlarını içeren Docker Hub’daki `mustafa12/monitor:0.0.18` image’ını kullanır. Uygulamanın kontrol ettiği Nexus endpoint’i ayrı `NEXUS_URL` ConfigMap ayarıdır; image dağıtım registry’siyle karıştırılmamalıdır.
 
 ```sh
 oc apply -f deploy/openshift.yaml
@@ -63,7 +63,7 @@ oc create secret generic cronworkflow-dashboard-secrets \
 
 Azure DevOps erişimi gerekiyorsa ilgili token’a repo içeriğini okuma yetkisi verin. PAT’in Secret key’i `AZURE_TOKEN` olmalıdır. Pod’a Secret’tan ortam değişkeni olarak aktarılır; loglanmaz.
 
-Nexus kontrolü anonim HTTP GET kullanır; bu sürümde Nexus username/password yoktur. CronWorkflow `spec.workflowSpec` altındaki image adı normalize namespace/proje adını içermiyorsa kontrol edilmez. Eşleşen image değerinin son `:` parçası image ID kabul edilir ve slash ile biten `NEXUS_URL` sonuna `bch-{namespace}/manifests/{imageId}` eklenir (örnek: `https://repomaster.company.com/repository/company-private/v2/mlops/bch-yazi-girisi-model/manifests/ald7383jdls8373`). Arayüzde image ID ve isteğin tam URL’si gösterilir. Her dashboard kontrolü tam URL’yi pod loguna yazar; cache hit olduğunda da URL ve cache durumu loglanır. Yanıt 200 ise `exist`, 404 ise `missing`, diğer HTTP durumları veya istek hataları `error` durumudur. Sonuçlar varsayılan olarak 5 dakika cache’lenir; aynı anda yapılan kontroller `REGISTRY_CHECK_CONCURRENCY` ile sınırlanır.
+Nexus kontrolü anonim HTTP GET kullanır; bu sürümde Nexus username/password yoktur. CronWorkflow `spec.workflowSpec` altındaki image adı normalize namespace/proje adını içermiyorsa kontrol edilmez. Eşleşen image değerinin son `:` parçası image ID kabul edilir ve slash ile biten `NEXUS_URL` sonuna `bch-{namespace}/manifests/{imageId}` eklenir (örnek: `https://repomaster.company.com/repository/company-private/v2/mlops/bch-yazi-girisi-model/manifests/ald7383jdls8373`). Arayüzde image ID ve isteğin tam URL’si gösterilir. Her dashboard lookup’ı, başlatılan kontrol sayısını ve cache durumunu `INFO` seviyesinde pod loguna yazar; gerçek GET URL’si ile sonuç/hata da `INFO` seviyesinde loglanır. Yanıt 200 ise `exist`, 404 ise `missing`, diğer HTTP durumları veya istek hataları `error` durumudur. Sonuçlar varsayılan olarak 24 saat cache’lenir; `IMAGE_CACHE_TTL` ile değiştirilebilir. Aynı anda yapılan kontroller `REGISTRY_CHECK_CONCURRENCY` ile sınırlanır.
 
 ## Kubernetes ve Argo erişimi
 
@@ -75,7 +75,7 @@ Deployment cluster içinde ServiceAccount kullanır. ClusterRole yalnızca aşa�
 
 ClusterRoleBinding bu okumayı cluster genelinde seçilen namespace’lere uygular; Kubernetes list/watch çağrıları yalnızca proje JSON’unda BCH olarak seçilen namespace’lere namespace-scoped yapılır. Argo Workflows CRD’lerinin `argoproj.io/v1alpha1` sürümü cluster’da kurulu olmalıdır. RBAC verilmeden önce manifestteki ClusterRoleBinding kapsamını platform ekibinizle doğrulayın.
 
-Servis varsayılan olarak 5 dakikada Azure project JSON’u ve namespace values dosyalarını yeniler; Nexus image sonuçlarını 5 dakika cache’ler. Arayüz API’yi 30 saniyede yeniler. Kubernetes okumaları her tarayıcı isteğinde tekrarlanmaz; informer cache’den sunulur.
+Servis varsayılan olarak 5 dakikada Azure project JSON’u ve namespace values dosyalarını yeniler; Nexus image sonuçlarını 24 saat cache’ler. Arayüz API’yi 30 saniyede yeniler. Dashboard isteği cache süresi dolmuş image kontrollerini başlatır; günlük cache aynı image için tekrarlanan Nexus isteklerini sınırlar. Kubernetes okumaları her tarayıcı isteğinde tekrarlanmaz; informer cache’den sunulur.
 
 ## Ağ erişimi
 
