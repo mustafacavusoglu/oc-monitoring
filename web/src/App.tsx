@@ -14,7 +14,7 @@ function label(value?: string) {
   const normalized = (value || 'Unavailable').toLowerCase()
   const labels: Record<string, string> = {
     succeeded: 'Başarılı', failed: 'Başarısız', error: 'Hata', running: 'Çalışıyor', pending: 'Bekliyor',
-    unavailable: 'Veri yok', exist: 'Mevcut', missing: 'Bulunamadı', unknown: 'Bilinmiyor',
+    unavailable: 'Veri yok', exist: 'Mevcut', missing: 'Bulunamadı', unknown: 'Bilinmiyor', checking: 'Kontrol ediliyor',
     suspended: 'Askıda', active: 'Aktif', ready: 'Hazır', syncing: 'Senkronize ediliyor', degraded: 'Sorun var',
   }
   return labels[normalized] || value || 'Veri yok'
@@ -172,6 +172,15 @@ export default function App() {
 
   const workflows = dashboard?.cronWorkflows || []
   const namespaces = dashboard?.namespaces || []
+  const needFastRefresh = !! dashboard && (
+    dashboard.clusterSource.state === 'syncing' ||
+    (dashboard.projectSource.state !== 'ready' && !dashboard.projectSource.lastSuccess) ||
+    dashboard.cronWorkflows.some((item) => item.images.some((image) => image.status === 'checking')))
+  useEffect(() => {
+    if (!needFastRefresh) return
+    const timer = window.setTimeout(() => { void refresh() }, 3_000)
+    return () => window.clearTimeout(timer)
+  }, [needFastRefresh, dashboard, refresh])
   const summary = useMemo(() => ({
     total: workflows.length,
     running: workflows.filter((item) => item.active || item.lastRun?.phase.toLowerCase() === 'running').length,

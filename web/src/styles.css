@@ -100,7 +100,7 @@ td small { display: block; margin-top: 4px; color: var(--muted); font-size: 11px
 .suspended-label { color: var(--muted); font-size: 11px; }
 .pill { display: inline-flex; align-items: center; min-height: 22px; border-radius: 4px; padding: 2px 7px; background: var(--neutral-bg); color: var(--neutral); font-size: 11px; font-weight: 650; }
 .pill-succeeded, .pill-exist, .pill-ready { background: var(--success-bg); color: var(--success); }
-.pill-running, .pill-active, .pill-syncing { background: var(--accent-soft); color: var(--accent); }
+.pill-running, .pill-active, .pill-syncing, .pill-checking { background: var(--accent-soft); color: var(--accent); }
 .pill-failed, .pill-error, .pill-missing, .pill-degraded { background: var(--danger-bg); color: var(--danger); }
 .pill-pending, .pill-unknown, .pill-unavailable, .pill-suspended { background: var(--warning-bg); color: var(--warning); }
 .button-link { min-height: 29px; padding: 0 8px; color: var(--accent); border-color: transparent; background: transparent; }

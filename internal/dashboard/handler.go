@@ -21,7 +21,7 @@ type Handler struct {
 }
 
 func NewHandler(projectsSource *projects.Source, watcher *cluster.Watcher, checker *registry.Checker) http.Handler {
-	return newHandler(projectsSource.Snapshot, watcher.Snapshot, checker.Check)
+	return newHandler(projectsSource.Snapshot, watcher.Snapshot, checker.Lookup)
 }
 
 func newHandler(projectSnapshot func() projects.Snapshot, clusterSnapshot func() cluster.Snapshot, checkImages func(context.Context, []string) map[string]model.ImageResult) http.Handler {
@@ -46,30 +46,60 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+func statusRank(status string) int {
+	switch status {
+	case "exist":
+		return 0
+	case "checking":
+		return 1
+	case "error":
+		return 2
+	case "unknown":
+		return 3
+	default:
+		return 4
+	}
+
+}
+
+func combinedResults(refs []string, results map[string]model.ImageResult) (model.ImageResult, bool) {
+	var best model.ImageResult
+	found := false
+	for _, ref := range refs {
+		result, ok := results[ref]
+		if !ok {
+			continue
+		}
+		if !found || statusRank(result.Status) > statusRank(best.Status) {
+			best = result
+			found = true
+		}
+	}
+	return best, found
+}
+
+
+
 func (h *Handler) snapshot(ctx context.Context) model.DashboardResponse {
 	now := time.Now().UTC()
 	projectSnapshot := h.projectSnapshot()
 	clusterSnapshot := h.clusterSnapshot()
 	views := cluster.BuildViews(clusterSnapshot, now)
 	images := make([]string, 0)
-	imageRefs := make(map[string]map[string]string, len(views))
-	imageNamespaces := make(map[string]struct{}, len(projectSnapshot.ImageNamespaces))
-	for _, namespace := range projectSnapshot.ImageNamespaces {
-		imageNamespaces[namespace] = struct{}{}
-	}
+	imageRefs := make(map[string]map[string][]string, len(views))
 	for i := range views {
-		if _, eligible := imageNamespaces[views[i].Namespace]; !eligible {
-			continue
-		}
 		for j := range views[i].Images {
 			image := &views[i].Images[j]
 			if image.ImageID == "" {
 				continue
 			}
-			ref := fmt.Sprintf("bch-%s/manifests/%s", views[i].Namespace, image.ImageID)
-			images = append(images, ref)
+			ref := []string{
+				fmt.Sprintf("bch-%s/manifests/%s", views[i].Namespace, image.ImageID),
+				fmt.Sprintf("cm-%s/manifests/%s", views[i].Namespace, image.ImageID),
+			}
+			images = append(images, ref...)
 			if imageRefs[views[i].Namespace] == nil {
-				imageRefs[views[i].Namespace] = make(map[string]string)
+				imageRefs[views[i].Namespace] = make(map[string][]string)
 			}
 			imageRefs[views[i].Namespace][image.Reference] = ref
 		}
@@ -82,10 +112,10 @@ func (h *Handler) snapshot(ctx context.Context) model.DashboardResponse {
 		for j := range views[i].Images {
 			image := &views[i].Images[j]
 			ref := imageRefs[views[i].Namespace][image.Reference]
-			if ref == "" {
+			if len(ref) == 0 {
 				continue
 			}
-			result, found := imageResults[ref]
+			result, found := combinedResults(ref, imageResults)
 			if !found {
 				continue
 			}

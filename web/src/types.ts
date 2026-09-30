@@ -2,7 +2,7 @@ export type ImageResult = {
   reference: string
   imageId?: string
   url?: string
-  status: 'exist' | 'missing' | 'error' | 'unknown' | string
+  status: 'exist' | 'missing' | 'error' | 'unknown' | 'checking' | string
   checkedAt?: string
   error?: string
 }

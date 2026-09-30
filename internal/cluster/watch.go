@@ -74,7 +74,7 @@ func NewWatcher(cfg *rest.Config, namespaces func() []string) (*Watcher, error) 
 func (w *Watcher) Run(ctx context.Context) {
 	log.Printf("cluster watcher starting")
 	w.reconcile(ctx)
-	ticker := time.NewTicker(5 * time.Second)
+	ticker := time.NewTicker(2 *time.Second)
 	defer ticker.Stop()
 	for {
 		select {

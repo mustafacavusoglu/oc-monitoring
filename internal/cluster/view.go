@@ -102,8 +102,14 @@ func imageIDFromReference(image string) string {
 	if image == emptyImageRef {
 		return ""
 	}
-	parts := strings.Split(image, ":")
-	return strings.TrimSpace(parts[len(parts)-1])
+	if at := strings.LastIndex(image, "@"); at > 0 {
+		return image[:at]
+	}
+	lastColon := strings.LastIndex(image, ":")
+	if lastColon < 0 || lastColon < strings.LastIndex(image, "/") {
+		return ""
+	}
+	return strings.TrimSpace(image[lastColon+1:])
 }
 
 func workflowView(workflow *unstructured.Unstructured, pods []*unstructured.Unstructured) model.WorkflowRun {

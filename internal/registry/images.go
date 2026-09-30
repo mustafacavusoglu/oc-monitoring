@@ -3,6 +3,7 @@ package registry
 import (
 	"context"
 	"fmt"
+	"io"
 	"log"
 	"net/http"
 	"net/url"
@@ -13,7 +14,19 @@ import (
 	"monitor/internal/model"
 )
 
-const requestTimeout = 10 * time.Second
+const (
+	requestTimeout = 10 * time.Second
+
+
+	negativeTTL = 30 * time.Second
+	
+	manifestAccept = "application/vnd.docker.distribution.manifest.v2+json, " +
+		"application/vnd.docker.distribution.manifest.list.v2+json, " +
+		"application/vnd.oci.image.manifest.v1+json, " +
+		"application/vnd.oci.image.index.v1+json, " +
+		"application/cnd.docker.distribution.manifest.v1+prettyjws, " +
+		"application/json"
+)
 
 type cacheEntry struct {
 	result    model.ImageResult
@@ -48,6 +61,62 @@ func NewChecker(baseURL string, ttl time.Duration, maxConcurrent int) (*Checker,
 		inflight:      make(map[string]chan struct{}),
 	}, nil
 }
+
+
+
+func (c *Checker) Lookup(ctx context.Context, refs []string) map[string]model.ImageResult {
+	background := context.WithoutCancel(ctx)
+	results := make(map[string]model.ImageResult, len(refs))
+	now := time.Now()
+	for _, ref := range refs {
+		if _, done := results[ref]; done {
+			continue
+		}
+		c.mu.Lock()
+		entry, cached := c.cache[ref]
+		_, running := c.inflight[ref]
+		start := (!cached || !now.Before(entry.expiresAt)) && !running
+		if start {
+			c.inflight[ref] = make(chan struct{})
+		}
+		c.mu.Unlock()
+		if cached {
+			results[ref] = entry.result
+		} else {
+			results[ref] = model.ImageResult{Reference: ref, Status: "checking"}
+		}
+
+		if start {
+			go c.refresh(background, ref)
+		}
+
+	}
+	return results
+}
+
+func (c *Checker) refresh(ctx context.Context, imageID string) {
+	c.slots <- struct{}{}
+	result := c.get(ctx, imageID)
+	<-c.slots
+	c.mu.Lock()
+	c.cache[imageID] = cacheEntry{result: result, expiresAt: time.Now().Add(c.ttlFor(result))}
+	if wait, ok := c.inflight[imageID]; ok {
+		delete(c.inflight, imageID)
+		close(wait)
+	}
+	c.mu.Unlock()
+}
+
+func (c *Checker) ttlFor(result model.ImageResult) time.Duration {
+	if result.Status == "exist" {
+		return c.ttl
+	}
+	return negativeTTL
+}
+
+
+
+
 
 func (c *Checker) Check(ctx context.Context, refs []string) map[string]model.ImageResult {
 	results := make(map[string]model.ImageResult, len(refs))
@@ -115,7 +184,7 @@ func (c *Checker) checkOne(ctx context.Context, imageID string) model.ImageResul
 		<-c.slots
 		c.mu.Lock()
 		if ctx.Err() == nil {
-			c.cache[imageID] = cacheEntry{result: result, expiresAt: time.Now().Add(c.ttl)}
+			c.cache[imageID] = cacheEntry{result: result, expiresAt: time.Now().Add(c.ttlFor(result))}
 		}
 		delete(c.inflight, imageID)
 		close(wait)
@@ -142,12 +211,14 @@ func (c *Checker) get(ctx context.Context, imageID string) model.ImageResult {
 		log.Printf("registry image check failed: method=GET url=%s error=%q", requestURL, err)
 		return result
 	}
+	req.Header.Set("Accept", manifestAccept)
 	resp, err := c.client.Do(req)
 	if err != nil {
 		result.Error = err.Error()
 		log.Printf("registry image check failed: method=GET url=%s error=%q", requestURL, err)
 		return result
 	}
+	_,_ = io.Copy(io.Discard, io.LimitReader(resp.Body, 1<<20))
 	resp.Body.Close()
 	switch resp.StatusCode {
 	case http.StatusOK:
