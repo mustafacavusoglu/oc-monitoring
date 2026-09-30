@@ -1,6 +1,6 @@
 {
-  "payments-bch": { "Type": "CustomServe", "serving": ["BCH"], "team": "payments" },
-  "retail-bch": { "Type": "CustomServe", "serving": ["bch", "OTHER"], "team": "retail" },
+  "PAYMENTS_API": { "serving": ["BCH"], "team": "payments" },
+  "RETAIL_MODEL": { "Type": "CustomServe", "serving": ["bch", "OTHER"], "team": "retail" },
   "platform-tools": { "Type": "CustomServe", "serving": ["OTHER"], "team": "platform" },
   "unclassified": { "team": "ops" }
 }

@@ -125,12 +125,6 @@ func projectTargets(projects map[string]json.RawMessage) ([]projectTarget, error
 		}
 		seenNamespaces[namespace] = projectKey
 		target := projectTarget{Namespace: namespace}
-		typeName := ""
-		if typeRaw := projectField(project, "type"); len(typeRaw) > 0 {
-			if err := json.Unmarshal(typeRaw, &typeName); err != nil {
-				return nil, fmt.Errorf("project %q Type must be a string", projectKey)
-			}
-		}
 		servingRaw := projectField(project, "serving")
 		if len(servingRaw) > 0 {
 			if len(strings.TrimSpace(string(servingRaw))) == 0 || strings.TrimSpace(string(servingRaw))[0] != '[' {
@@ -141,7 +135,7 @@ func projectTargets(projects map[string]json.RawMessage) ([]projectTarget, error
 				return nil, fmt.Errorf("project %q serving must be a string array", projectKey)
 			}
 			for _, value := range serving {
-				if strings.EqualFold(strings.TrimSpace(typeName), "CustomServe") && strings.Contains(strings.ToLower(strings.TrimSpace(value)), "bch") {
+				if strings.Contains(strings.ToLower(strings.TrimSpace(value)), "bch") {
 					target.CheckImages = true
 					break
 				}

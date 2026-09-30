@@ -28,7 +28,7 @@ func TestSourceRefreshPublishesOnlyBCHProjects(t *testing.T) {
 	}, server.Client())
 	source.refresh(context.Background())
 	snapshot := source.Snapshot()
-	want := []string{"payments-bch", "retail-bch"}
+	want := []string{"payments-api", "retail-model"}
 	if !reflect.DeepEqual(snapshot.Namespaces, want) || snapshot.Stale {
 		t.Fatalf("project snapshot = %+v, want BCH namespaces %v", snapshot, want)
 	}
@@ -48,8 +48,22 @@ func TestSelectBCHNamespacesFromProjectFixture(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := []string{"payments-bch", "retail-bch"}
+	want := []string{"payments-api", "retail-model"}
 	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("selected namespaces = %v, want %v", got, want)
+	}
+}
+
+func TestSelectBCHNamespacesNormalizesProjectKeysWithoutType(t *testing.T) {
+	projects := map[string]json.RawMessage{
+		"KNAK_PROJE": json.RawMessage(`{"serving":["BCH"]}`),
+		"CM_PROJE":   json.RawMessage(`{"serving":["CM"]}`),
+	}
+	got, err := selectBCHNamespaces(projects)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := []string{"knak-proje"}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("selected namespaces = %v, want %v", got, want)
 	}
 }

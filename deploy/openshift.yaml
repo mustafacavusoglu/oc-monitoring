@@ -86,7 +86,7 @@ spec:
           type: RuntimeDefault
       containers:
         - name: dashboard
-          image: mustafa12/monitor:0.0.19
+          image: mustafa12/monitor:0.0.20
           imagePullPolicy: IfNotPresent
           envFrom:
             - configMapRef:
