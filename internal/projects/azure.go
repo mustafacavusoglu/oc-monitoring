@@ -22,12 +22,13 @@ type azureClient struct {
 	filePath  string
 	token     string
 	tokenFile string
+	timeout   time.Duration
 	http      *http.Client
 }
 
 func newAzureClient(cfg config.Config, client *http.Client) *azureClient {
 	if client == nil {
-		client = &http.Client{Timeout: 10 * time.Second}
+		client = &http.Client{Timeout: cfg.UpstreamTimeout}
 	}
 	return &azureClient{
 		repoURL:   cfg.AzureRepoURL,
@@ -35,6 +36,7 @@ func newAzureClient(cfg config.Config, client *http.Client) *azureClient {
 		filePath:  cfg.AzureProjectsPath,
 		token:     cfg.AzureToken,
 		tokenFile: cfg.AzureTokenFile,
+		timeout:   cfg.UpstreamTimeout,
 		http:      client,
 	}
 }
@@ -44,7 +46,7 @@ func (c *azureClient) projects(ctx context.Context) (map[string]json.RawMessage,
 	if err != nil {
 		return nil, err
 	}
-	requestCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	requestCtx, cancel := context.WithTimeout(ctx, c.timeout)
 	defer cancel()
 	req, err := http.NewRequestWithContext(requestCtx, http.MethodGet, requestURL, nil)
 	if err != nil {
@@ -90,17 +92,13 @@ func (c *azureClient) authorize(req *http.Request) error {
 	token := c.token
 	if token == "" {
 		var err error
-		token, err = readToken(c.tokenFile)
+		token, err = readSecretFile(c.tokenFile)
 		if err != nil {
 			return err
 		}
 	}
 	req.SetBasicAuth("", token)
 	return nil
-}
-
-func readToken(file string) (string, error) {
-	return readSecretFile(file)
 }
 
 func azureItemURL(repoURL, filePath, branch string) (string, error) {

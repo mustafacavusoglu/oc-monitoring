@@ -17,6 +17,8 @@ import (
 	"monitor/internal/projects"
 	"monitor/internal/registry"
 	"monitor/internal/webui"
+
+	"k8s.io/apimachinery/pkg/runtime/schema"
 )
 
 func main() {
@@ -24,25 +26,35 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
+	client, err := cluster.NewClient()
+	if err != nil {
+		log.Fatal(err)
+	}
 
 	projectSource := projects.NewSource(cfg, nil)
-	clusterWatcher, err := cluster.NewWatcher(nil, func() []string {
-		return projectSource.Snapshot().Namespaces
-	})
-	if err != nil {
-		log.Fatal(err)
-	}
-	imageChecker, err := registry.NewChecker(cfg.NexusURL, cfg.ImageCacheTTL, cfg.RegistryCheckConcurrency)
-	if err != nil {
-		log.Fatal(err)
-	}
+	res := cfg.Resources
+	// Batch resources are watched only in the namespaces selected from the
+	// project file; models are watched cluster-wide.
+	batchWatcher := cluster.NewWatcher("batch", client,
+		[]schema.GroupVersionResource{res.CronWorkflows, res.Workflows, cluster.Pods},
+		func() []string { return projectSource.Snapshot().Namespaces })
+	modelWatcher := cluster.NewWatcher("models", client,
+		[]schema.GroupVersionResource{res.InferenceServices, res.ServingRuntimes, res.LLMInferenceServices},
+		cluster.AllNamespaces)
+	imageChecker := registry.NewChecker(cfg.NexusManifestURLTemplate, cfg.ImageCacheTTL, cfg.RegistryCheckConcurrency, cfg.UpstreamTimeout)
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 	go projectSource.Run(ctx)
-	go clusterWatcher.Run(ctx)
+	go batchWatcher.Run(ctx)
+	go modelWatcher.Run(ctx)
 
-	api := dashboard.NewHandler(projectSource, clusterWatcher, imageChecker)
+	api := dashboard.NewHandler(dashboard.Sources{
+		Projects: projectSource.Snapshot,
+		Batch:    batchWatcher.Snapshot,
+		Models:   modelWatcher.Snapshot,
+		Images:   imageChecker,
+	}, cfg)
 	server := &http.Server{
 		Addr:              cfg.HTTPAddr,
 		Handler:           webui.New(api, cfg.WebDir),

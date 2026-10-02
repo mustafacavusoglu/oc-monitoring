@@ -1,89 +1,176 @@
+// Package config loads every environment-specific setting from the process
+// environment, which the Deployment fills from a ConfigMap (and an optional
+// Secret). Nothing here has an in-code default: a missing key is a startup error.
 package config
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"strconv"
 	"strings"
 	"time"
+
+	"k8s.io/apimachinery/pkg/runtime/schema"
 )
 
 type Config struct {
-	HTTPAddr                 string
-	WebDir                   string
-	AzureRepoURL             string
-	AzureRepoBranch          string
-	AzureProjectsPath        string
-	AzureToken               string
-	AzureTokenFile           string
-	NexusURL                 string
-	ProjectRefreshInterval   time.Duration
+	HTTPAddr string
+	WebDir   string
+
+	AzureRepoURL      string
+	AzureRepoBranch   string
+	AzureProjectsPath string
+	AzureToken        string // optional, from Secret
+	AzureTokenFile    string // optional, from Secret mount
+	// BatchServingKeyword selects project namespaces whose `serving` list
+	// contains this value (case-insensitive substring).
+	BatchServingKeyword    string
+	ProjectRefreshInterval time.Duration
+
+	// NexusManifestURLTemplate contains {namespace} and {imageId} placeholders.
+	NexusManifestURLTemplate string
 	ImageCacheTTL            time.Duration
 	RegistryCheckConcurrency int
+	UpstreamTimeout          time.Duration
+
+	Serving   ServingRules
+	Resources Resources
+
+	UIRefreshInterval time.Duration
+}
+
+// ServingRules classifies KServe InferenceServices by their ServingRuntime image.
+type ServingRules struct {
+	LLMImageKeywords []string
+	MLImageKeywords  []string
+	GPUResourceName  string
+}
+
+// Resources holds the API group/version/resource of each watched CRD so that
+// cluster-specific API versions are configured, not compiled in.
+type Resources struct {
+	CronWorkflows        schema.GroupVersionResource
+	Workflows            schema.GroupVersionResource
+	InferenceServices    schema.GroupVersionResource
+	ServingRuntimes      schema.GroupVersionResource
+	LLMInferenceServices schema.GroupVersionResource
 }
 
 func Load() (Config, error) {
+	var e env
 	cfg := Config{
-		HTTPAddr:          valueOr("HTTP_ADDR", ":8080"),
-		WebDir:            valueOr("WEB_DIR", "web/dist"),
-		AzureRepoURL:      strings.TrimSpace(os.Getenv("AZURE_REPO_URL")),
-		AzureRepoBranch:   strings.TrimSpace(os.Getenv("AZURE_REPO_BRANCH")),
-		AzureProjectsPath: strings.TrimSpace(os.Getenv("AZURE_PROJECTS_PATH")),
-		AzureToken:        strings.TrimSpace(os.Getenv("AZURE_TOKEN")),
-		AzureTokenFile:    strings.TrimSpace(os.Getenv("AZURE_TOKEN_FILE")),
-		NexusURL:          strings.TrimSpace(os.Getenv("NEXUS_URL")),
+		HTTPAddr:                 e.str("HTTP_ADDR"),
+		WebDir:                   e.str("WEB_DIR"),
+		AzureRepoURL:             e.str("AZURE_REPO_URL"),
+		AzureRepoBranch:          e.str("AZURE_REPO_BRANCH"),
+		AzureProjectsPath:        e.str("AZURE_PROJECTS_PATH"),
+		AzureToken:               strings.TrimSpace(os.Getenv("AZURE_TOKEN")),
+		AzureTokenFile:           strings.TrimSpace(os.Getenv("AZURE_TOKEN_FILE")),
+		BatchServingKeyword:      e.str("BATCH_SERVING_KEYWORD"),
+		ProjectRefreshInterval:   e.duration("PROJECT_REFRESH_INTERVAL"),
+		NexusManifestURLTemplate: e.str("NEXUS_MANIFEST_URL_TEMPLATE"),
+		ImageCacheTTL:            e.duration("IMAGE_CACHE_TTL"),
+		RegistryCheckConcurrency: e.positiveInt("REGISTRY_CHECK_CONCURRENCY"),
+		UpstreamTimeout:          e.duration("UPSTREAM_TIMEOUT"),
+		Serving: ServingRules{
+			LLMImageKeywords: e.list("LLM_RUNTIME_IMAGE_KEYWORDS"),
+			MLImageKeywords:  e.list("ML_RUNTIME_IMAGE_KEYWORDS"),
+			GPUResourceName:  e.str("GPU_RESOURCE_NAME"),
+		},
+		Resources: Resources{
+			CronWorkflows:        e.resource("CRONWORKFLOW_RESOURCE"),
+			Workflows:            e.resource("WORKFLOW_RESOURCE"),
+			InferenceServices:    e.resource("INFERENCE_SERVICE_RESOURCE"),
+			ServingRuntimes:      e.resource("SERVING_RUNTIME_RESOURCE"),
+			LLMInferenceServices: e.resource("LLM_INFERENCE_SERVICE_RESOURCE"),
+		},
+		UIRefreshInterval: e.duration("UI_REFRESH_INTERVAL"),
 	}
-	if cfg.AzureRepoURL == "" || cfg.AzureRepoBranch == "" || cfg.AzureProjectsPath == "" || cfg.NexusURL == "" {
-		return Config{}, fmt.Errorf("AZURE_REPO_URL, AZURE_REPO_BRANCH, AZURE_PROJECTS_PATH, and NEXUS_URL are required")
+	for _, placeholder := range []string{"{namespace}", "{imageId}"} {
+		if cfg.NexusManifestURLTemplate != "" && !strings.Contains(cfg.NexusManifestURLTemplate, placeholder) {
+			e.fail("NEXUS_MANIFEST_URL_TEMPLATE must contain %s", placeholder)
+		}
 	}
-
-	var err error
-	if cfg.ProjectRefreshInterval, err = durationOr("PROJECT_REFRESH_INTERVAL", 5*time.Minute); err != nil {
+	if err := e.err(); err != nil {
 		return Config{}, err
-	}
-	if cfg.ImageCacheTTL, err = durationOr("IMAGE_CACHE_TTL", 24*time.Hour); err != nil {
-		return Config{}, err
-	}
-	cfg.RegistryCheckConcurrency, err = intOr("REGISTRY_CHECK_CONCURRENCY", 4)
-	if err != nil {
-		return Config{}, err
-	}
-	if cfg.RegistryCheckConcurrency < 1 {
-		return Config{}, fmt.Errorf("REGISTRY_CHECK_CONCURRENCY must be positive")
-	}
-	if cfg.ProjectRefreshInterval <= 0 || cfg.ImageCacheTTL <= 0 {
-		return Config{}, fmt.Errorf("refresh intervals must be positive")
 	}
 	return cfg, nil
 }
 
-func valueOr(key, fallback string) string {
-	if value := strings.TrimSpace(os.Getenv(key)); value != "" {
-		return value
-	}
-	return fallback
+// env collects every missing or invalid key so one startup error lists them all.
+type env struct {
+	missing  []string
+	problems []string
 }
 
-func durationOr(key string, fallback time.Duration) (time.Duration, error) {
+func (e *env) str(key string) string {
 	value := strings.TrimSpace(os.Getenv(key))
 	if value == "" {
-		return fallback, nil
+		e.missing = append(e.missing, key)
 	}
-	duration, err := time.ParseDuration(value)
-	if err != nil {
-		return 0, fmt.Errorf("%s: %w", key, err)
-	}
-	return duration, nil
+	return value
 }
 
-func intOr(key string, fallback int) (int, error) {
-	value := strings.TrimSpace(os.Getenv(key))
+func (e *env) duration(key string) time.Duration {
+	value := e.str(key)
 	if value == "" {
-		return fallback, nil
+		return 0
+	}
+	d, err := time.ParseDuration(value)
+	if err != nil || d <= 0 {
+		e.fail("%s must be a positive duration, got %q", key, value)
+	}
+	return d
+}
+
+func (e *env) positiveInt(key string) int {
+	value := e.str(key)
+	if value == "" {
+		return 0
 	}
 	n, err := strconv.Atoi(value)
-	if err != nil {
-		return 0, fmt.Errorf("%s: %w", key, err)
+	if err != nil || n < 1 {
+		e.fail("%s must be a positive integer, got %q", key, value)
 	}
-	return n, nil
+	return n
+}
+
+func (e *env) list(key string) []string {
+	var items []string
+	for _, item := range strings.Split(e.str(key), ",") {
+		if item = strings.TrimSpace(item); item != "" {
+			items = append(items, item)
+		}
+	}
+	return items
+}
+
+// resource parses "group/version/resource"; the core group is written "/v1/pods".
+func (e *env) resource(key string) schema.GroupVersionResource {
+	value := e.str(key)
+	if value == "" {
+		return schema.GroupVersionResource{}
+	}
+	parts := strings.Split(value, "/")
+	if len(parts) != 3 || parts[1] == "" || parts[2] == "" {
+		e.fail("%s must look like group/version/resource, got %q", key, value)
+		return schema.GroupVersionResource{}
+	}
+	return schema.GroupVersionResource{Group: parts[0], Version: parts[1], Resource: parts[2]}
+}
+
+func (e *env) fail(format string, args ...any) {
+	e.problems = append(e.problems, fmt.Sprintf(format, args...))
+}
+
+func (e *env) err() error {
+	var errs []error
+	if len(e.missing) > 0 {
+		errs = append(errs, fmt.Errorf("missing required settings: %s", strings.Join(e.missing, ", ")))
+	}
+	for _, problem := range e.problems {
+		errs = append(errs, errors.New(problem))
+	}
+	return errors.Join(errs...)
 }

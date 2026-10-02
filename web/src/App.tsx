@@ -1,279 +1,78 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { fetchDashboard } from './api'
-import type { CronWorkflow, DashboardResponse, ImageResult, Pod, SourceHealth } from './types'
+import { useEffect, useMemo, useState } from 'react'
+import { Sidebar, type NavItem } from './components/Sidebar'
+import { Topbar, type Theme } from './components/Topbar'
+import { batchIssues, modelIssues } from './lib/status'
+import { useDashboard } from './lib/useDashboard'
+import { ALL_NAMESPACES, useRoute, type Page } from './lib/useRoute'
+import { Batch } from './pages/Batch'
+import { Models } from './pages/Models'
+import { Overview } from './pages/Overview'
 
-type Theme = 'light' | 'dark'
+const THEME_KEY = 'mlops-dashboard-theme'
 
-function formatDate(value?: string) {
-  if (!value) return '—'
-  const date = new Date(value)
-  return Number.isNaN(date.getTime()) ? value : new Intl.DateTimeFormat('tr-TR', { dateStyle: 'short', timeStyle: 'short' }).format(date)
+const PAGE_TEXT: Record<Page, { title: string; subtitle: string }> = {
+  overview: { title: 'Genel bakış', subtitle: 'Tüm model ve batch kaynaklarının özeti' },
+  llm: { title: 'LLM modelleri', subtitle: 'LLMInferenceService ve vLLM runtime kullanan InferenceService’ler' },
+  ml: { title: 'ML modelleri', subtitle: 'Triton runtime kullanan InferenceService’ler' },
+  batch: { title: 'Batch modelleri', subtitle: 'Argo CronWorkflow’lar, son çalışmalar ve Nexus image kontrolü' },
 }
 
-function label(value?: string) {
-  const normalized = (value || 'Unavailable').toLowerCase()
-  const labels: Record<string, string> = {
-    succeeded: 'Başarılı', failed: 'Başarısız', error: 'Hata', running: 'Çalışıyor', pending: 'Bekliyor',
-    unavailable: 'Veri yok', exist: 'Mevcut', missing: 'Bulunamadı', unknown: 'Bilinmiyor', checking: 'Kontrol ediliyor',
-    suspended: 'Askıda', active: 'Aktif', ready: 'Hazır', syncing: 'Senkronize ediliyor', degraded: 'Sorun var',
-  }
-  return labels[normalized] || value || 'Veri yok'
-}
-
-function StatePill({ value }: { value?: string }) {
-  const key = (value || 'unavailable').toLowerCase().replace(/[^a-z0-9]+/g, '-')
-  return <span className={`pill pill-${key}`}>{label(value)}</span>
-}
-
-function SourceStatus({ name, source }: { name: string; source: SourceHealth }) {
-  return <span className="source-status" title={source.error || `Son başarılı güncelleme: ${formatDate(source.lastSuccess)}`}>
-    <span className={`source-dot source-${source.state.toLowerCase()}`} />{name}: {label(source.state)}
-  </span>
-}
-
-function NamespaceFilter({ namespaces, value, onChange }: { namespaces: string[]; value: string; onChange: (value: string) => void }) {
-  const [open, setOpen] = useState(false)
-  const [query, setQuery] = useState('')
-  const root = useRef<HTMLDivElement>(null)
-  const options = ['all', ...namespaces].filter((item) =>
-    item === 'all' || item.toLocaleLowerCase('tr-TR').includes(query.trim().toLocaleLowerCase('tr-TR')))
-
-  useEffect(() => {
-    if (!open) return
-    const closeOnOutsideClick = (event: MouseEvent) => {
-      if (event.target instanceof Node && !root.current?.contains(event.target)) setOpen(false)
-    }
-    const closeOnEscape = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') setOpen(false)
-    }
-    document.addEventListener('mousedown', closeOnOutsideClick)
-    document.addEventListener('keydown', closeOnEscape)
-    return () => {
-      document.removeEventListener('mousedown', closeOnOutsideClick)
-      document.removeEventListener('keydown', closeOnEscape)
-    }
-  }, [open])
-
-  return <div className="namespace-filter" ref={root}>
-    <button className="namespace-trigger" type="button" aria-haspopup="listbox" aria-expanded={open} onClick={() => setOpen(!open)}>
-      {value === 'all' ? 'Tüm namespace’ler' : value}<span aria-hidden="true">⌄</span>
-    </button>
-    {open ? <div className="namespace-menu">
-      <input autoFocus aria-label="Namespace ara" placeholder="Namespace ara…" value={query} onChange={(event) => setQuery(event.target.value)} />
-      <div className="namespace-options" role="listbox" aria-label="Namespace’ler">
-        {options.map((item) => <button key={item} type="button" role="option" aria-selected={value === item} onClick={() => { onChange(item); setOpen(false); setQuery('') }}>
-          {item === 'all' ? 'Tüm namespace’ler' : item}
-        </button>)}
-        {!options.length ? <span className="namespace-empty">Eşleşme yok.</span> : null}
-      </div>
-    </div> : null}
-  </div>
-}
-
-function PodDetails({ pod }: { pod: Pod }) {
-  return <div className="pod-row">
-    <div><strong>{pod.name}</strong>{pod.containerStates?.length ? <small>{pod.containerStates.join(' · ')}</small> : null}</div>
-    <StatePill value={pod.phase} />
-  </div>
-}
-
-function ImageDetails({ image }: { image: ImageResult }) {
-  return <div className="image-row">
-    <div className="image-meta">
-      <strong>Image ID: <code>{image.imageId || '—'}</code></strong>
-      {image.url ? <small className="image-address"><code>{image.url}</code></small> : image.imageId ? null : <small><code>{image.reference}</code></small>}
-    </div>
-    <div><StatePill value={image.status} />{image.error ? <small className="detail-error">{image.error}</small> : null}</div>
-  </div>
-}
-
-function WorkflowDetails({ workflow }: { workflow: CronWorkflow }) {
-  return <div className="details-grid">
-    <section className="detail-section">
-      <h3>Zamanlama</h3>
-      <dl>
-        <div><dt>Schedule</dt><dd>{workflow.schedules.length ? workflow.schedules.join(' · ') : '—'}</dd></div>
-        <div><dt>Saat dilimi</dt><dd>{workflow.timezone || '—'}</dd></div>
-        <div><dt>Son tetiklenme</dt><dd>{formatDate(workflow.lastScheduledAt)}</dd></div>
-        {workflow.scheduleError ? <div><dt>Zamanlama hatası</dt><dd className="detail-error">{workflow.scheduleError}</dd></div> : null}
-      </dl>
-    </section>
-    <section className="detail-section">
-      <h3>Son Workflow</h3>
-      {workflow.lastRun ? <>
-        <dl>
-          <div><dt>Ad</dt><dd>{workflow.lastRun.name}</dd></div>
-          <div><dt>Başlangıç</dt><dd>{formatDate(workflow.lastRun.startedAt || workflow.lastRun.createdAt)}</dd></div>
-          <div><dt>Bitiş</dt><dd>{formatDate(workflow.lastRun.finishedAt)}</dd></div>
-        </dl>
-        <h4>Pod’lar ({workflow.lastRun.pods.length})</h4>
-        {workflow.lastRun.pods.length ? workflow.lastRun.pods.map((pod) => <PodDetails key={pod.name} pod={pod} />) : <p className="muted">Pod bulunamadı.</p>}
-      </> : <p className="muted">Henüz workflow çalışmamış.</p>}
-    </section>
-    <section className="detail-section detail-images">
-      <h3>Image’lar ({workflow.images.length})</h3>
-      {workflow.images.length ? workflow.images.map((image) => <ImageDetails key={image.reference} image={image} />) : <p className="muted">Image bilgisi bulunamadı.</p>}
-    </section>
-  </div>
-}
-
-function matchesRun(workflow: CronWorkflow, filter: string) {
-  if (filter === 'all') return true
-  const phase = (workflow.lastRun?.phase || 'unavailable').toLowerCase()
-  if (filter === 'failed') return phase === 'failed' || phase === 'error'
-  if (filter === 'running') return workflow.active || phase === 'running'
-  return phase === filter
+function initialTheme(): Theme {
+  try {
+    const stored = localStorage.getItem(THEME_KEY)
+    if (stored === 'light' || stored === 'dark') return stored
+  } catch { /* storage may be unavailable */ }
+  return window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light'
 }
 
 export default function App() {
-  const [dashboard, setDashboard] = useState<DashboardResponse | null>(null)
-  const [loading, setLoading] = useState(true)
-  const [refreshing, setRefreshing] = useState(false)
-  const [error, setError] = useState('')
-  const [namespace, setNamespace] = useState('all')
-  const [runFilter, setRunFilter] = useState('all')
-  const [imageFilter, setImageFilter] = useState('all')
-  const [expanded, setExpanded] = useState<string | null>(null)
-  const [theme, setTheme] = useState<Theme>(() => {
-    try { return localStorage.getItem('cron-dashboard-theme') === 'dark' ? 'dark' : 'light' } catch { return 'light' }
-  })
+  const { data, error, refreshing, refresh } = useDashboard()
+  const [{ page, namespace }, navigate] = useRoute()
+  const [theme, setTheme] = useState(initialTheme)
+  const [menuOpen, setMenuOpen] = useState(false)
 
   useEffect(() => {
     document.documentElement.dataset.theme = theme
-    try { localStorage.setItem('cron-dashboard-theme', theme) } catch { /* Storage may be disabled. */ }
+    try { localStorage.setItem(THEME_KEY, theme) } catch { /* storage may be unavailable */ }
   }, [theme])
 
-  const refresh = useCallback(async () => {
-    setRefreshing(true)
-    const controller = new AbortController()
-    try {
-      const data = await fetchDashboard(controller.signal)
-      setDashboard(data)
-      setError('')
-    } catch (cause) {
-      if (!(cause instanceof DOMException && cause.name === 'AbortError')) setError(cause instanceof Error ? cause.message : 'Dashboard verisi alınamadı.')
-    } finally {
-      setLoading(false)
-      setRefreshing(false)
-    }
-  }, [])
+  const { models, cronWorkflows } = useMemo(() => {
+    const inScope = <T extends { namespace: string }>(items: T[] = []) =>
+      namespace === ALL_NAMESPACES ? items : items.filter((item) => item.namespace === namespace)
+    return { models: inScope(data?.models), cronWorkflows: inScope(data?.cronWorkflows) }
+  }, [data, namespace])
 
-  useEffect(() => {
-    const controller = new AbortController()
-    let active = true
-    fetchDashboard(controller.signal).then((data) => {
-      if (active) { setDashboard(data); setError('') }
-    }).catch((cause: unknown) => {
-      if (active && !(cause instanceof DOMException && cause.name === 'AbortError')) setError(cause instanceof Error ? cause.message : 'Dashboard verisi alınamadı.')
-    }).finally(() => { if (active) { setLoading(false); setRefreshing(false) } })
-    const interval = window.setInterval(() => { void refresh() }, 30_000)
-    return () => { active = false; controller.abort(); window.clearInterval(interval) }
-  }, [refresh])
+  const navItems = useMemo<NavItem[]>(() => {
+    const llm = models.filter((m) => m.type === 'llm')
+    const ml = models.filter((m) => m.type === 'ml')
+    const problems = (list: typeof models) => list.filter((m) => modelIssues(m).length).length
+    const batchProblems = cronWorkflows.filter((w) => batchIssues(w).length).length
+    return [
+      { page: 'overview', label: 'Genel bakış', icon: 'overview', alerts: problems(models) + batchProblems },
+      { page: 'llm', label: 'LLM modelleri', icon: 'llm', count: llm.length, alerts: problems(llm) },
+      { page: 'ml', label: 'ML modelleri', icon: 'ml', count: ml.length, alerts: problems(ml) },
+      { page: 'batch', label: 'Batch modelleri', icon: 'batch', count: cronWorkflows.length, alerts: batchProblems },
+    ]
+  }, [models, cronWorkflows])
 
-  const workflows = dashboard?.cronWorkflows || []
-  const namespaces = dashboard?.namespaces || []
-  const needFastRefresh = !! dashboard && (
-    dashboard.clusterSource.state === 'syncing' ||
-    (dashboard.projectSource.state !== 'ready' && !dashboard.projectSource.lastSuccess) ||
-    dashboard.cronWorkflows.some((item) => item.images.some((image) => image.status === 'checking')))
-  useEffect(() => {
-    if (!needFastRefresh) return
-    const timer = window.setTimeout(() => { void refresh() }, 3_000)
-    return () => window.clearTimeout(timer)
-  }, [needFastRefresh, dashboard, refresh])
-  const summary = useMemo(() => ({
-    total: workflows.length,
-    running: workflows.filter((item) => item.active || item.lastRun?.phase.toLowerCase() === 'running').length,
-    failed: workflows.filter((item) => ['failed', 'error'].includes(item.lastRun?.phase.toLowerCase() || '')).length,
-    missing: workflows.filter((item) => item.images.some((image) => image.status.toLowerCase() === 'missing')).length,
-  }), [workflows])
-  const visibleWorkflows = useMemo(() => workflows.filter((item) =>
-    (namespace === 'all' || item.namespace === namespace) && matchesRun(item, runFilter) &&
-    (imageFilter === 'all' || item.images.some((image) => image.status.toLowerCase() === imageFilter))),
-  [workflows, namespace, runFilter, imageFilter])
-
-  const applySummaryFilter = (filter: 'all' | 'running' | 'failed' | 'missing') => {
-    setNamespace('all')
-    setRunFilter(filter === 'missing' ? 'all' : filter)
-    setImageFilter(filter === 'missing' ? 'missing' : 'all')
-    setExpanded(null)
+  const goTo = (next: Page) => {
+    navigate({ page: next })
+    setMenuOpen(false)
   }
 
-  return <main className="app-shell">
-    <header className="page-header">
-      <div><p className="eyebrow">OPENSHIFT · ARGO WORKFLOWS</p><h1>CronWorkflow izleme</h1></div>
-      <div className="header-actions">
-        <span className="updated-at">{dashboard ? `Güncelleme: ${formatDate(dashboard.generatedAt)}` : 'Canlı durum'}</span>
-        <button className="button button-secondary theme-toggle" onClick={() => setTheme(theme === 'light' ? 'dark' : 'light')} aria-label={theme === 'light' ? 'Koyu temaya geç' : 'Açık temaya geç'}>
-          {theme === 'light' ? '☾ Koyu' : '☀ Açık'}
-        </button>
-        <button className="button button-secondary refresh-button" onClick={() => void refresh()} disabled={refreshing}>{refreshing ? 'Yenileniyor…' : 'Yenile'}</button>
-      </div>
-    </header>
-
-    {dashboard ? <div className="source-line" aria-label="Veri kaynakları">
-      <SourceStatus name="Projeler" source={dashboard.projectSource} />
-      <SourceStatus name="OpenShift" source={dashboard.clusterSource} />
-      <SourceStatus name="Registry" source={dashboard.registrySource} />
-    </div> : null}
-
-    {error ? <div className="notice notice-error" role="alert">Veri yenilenemedi: {error}{dashboard ? ' · Önceki veriler gösteriliyor.' : ''}</div> : null}
-    {loading && !dashboard ? <div className="empty-state">CronWorkflow verileri yükleniyor…</div> : null}
-
-    {dashboard ? <>
-      <section className="summary-grid" aria-label="Özet">
-        <button className={`summary-card ${runFilter === 'all' && imageFilter === 'all' ? 'selected' : ''}`} onClick={() => applySummaryFilter('all')}>
-          <span>CronWorkflow</span><strong>{summary.total}</strong>
-        </button>
-        <button className={`summary-card ${runFilter === 'running' ? 'selected' : ''}`} onClick={() => applySummaryFilter('running')}>
-          <span>Çalışan</span><strong>{summary.running}</strong>
-        </button>
-        <button className={`summary-card ${runFilter === 'failed' ? 'selected' : ''}`} onClick={() => applySummaryFilter('failed')}>
-          <span>Başarısız son çalışma</span><strong>{summary.failed}</strong>
-        </button>
-        <button className={`summary-card ${imageFilter === 'missing' ? 'selected' : ''}`} onClick={() => applySummaryFilter('missing')}>
-          <span>Eksik image</span><strong>{summary.missing}</strong>
-        </button>
-      </section>
-
-      <section className="workflows-section">
-        <div className="section-heading"><div><h2>CronWorkflow’lar</h2><span>{visibleWorkflows.length} kayıt</span></div>
-          <div className="filters">
-            <div className="filter-control"><span>Namespace</span><NamespaceFilter namespaces={namespaces} value={namespace} onChange={setNamespace} /></div>
-            <label>Son çalışma <select value={runFilter} onChange={(event) => setRunFilter(event.target.value)}>
-              <option value="all">Tümü</option><option value="running">Çalışıyor</option><option value="succeeded">Başarılı</option><option value="failed">Başarısız / hata</option><option value="pending">Bekliyor</option><option value="unavailable">Veri yok</option>
-            </select></label>
-            <label>Image <select value={imageFilter} onChange={(event) => setImageFilter(event.target.value)}>
-              <option value="all">Tümü</option><option value="exist">Mevcut</option><option value="missing">Bulunamadı</option><option value="error">Hata</option><option value="unknown">Bilinmiyor</option>
-            </select></label>
-          </div>
-        </div>
-        <div className="table-wrap"><table>
-          <thead><tr><th>CronWorkflow</th><th>Durum</th><th>Son çalışma</th><th>Son çalışma zamanı</th><th>Sonraki zamanlama</th><th></th></tr></thead>
-          <tbody>{visibleWorkflows.map((workflow) => {
-            const key = `${workflow.namespace}/${workflow.name}`
-            const isExpanded = expanded === key
-            const phase = workflow.lastRun?.phase || (workflow.active ? 'Running' : 'Unavailable')
-            return <FragmentRow key={key} workflow={workflow} phase={phase} isExpanded={isExpanded} onToggle={() => setExpanded(isExpanded ? null : key)} />
-          })}
-          {!visibleWorkflows.length ? <tr><td className="no-results" colSpan={6}>Bu filtrelerle eşleşen CronWorkflow yok.</td></tr> : null}</tbody>
-        </table></div>
-      </section>
-    </> : null}
-    <footer className="page-footer">30 saniyede bir otomatik güncellenir{refreshing ? ' · Güncelleniyor' : ''}</footer>
-  </main>
-}
-
-function FragmentRow({ workflow, phase, isExpanded, onToggle }: { workflow: CronWorkflow; phase: string; isExpanded: boolean; onToggle: () => void }) {
-  return <>
-    <tr className={isExpanded ? 'workflow-row expanded' : 'workflow-row'}>
-      <td><strong>{workflow.name}</strong><small>{workflow.namespace}</small></td>
-      <td><div className="row-status"><StatePill value={phase} />{workflow.suspended ? <span className="suspended-label">Askıda</span> : null}</div></td>
-      <td>{workflow.lastRun?.name || '—'}</td>
-      <td>{formatDate(workflow.lastRun?.startedAt || workflow.lastRun?.createdAt || workflow.lastScheduledAt)}</td>
-      <td>{formatDate(workflow.nextScheduledAt)}</td>
-      <td><button className="button button-link" aria-expanded={isExpanded} onClick={onToggle}>{isExpanded ? 'Kapat' : 'Detay'}</button></td>
-    </tr>
-    {isExpanded ? <tr className="details-row"><td colSpan={6}><WorkflowDetails workflow={workflow} /></td></tr> : null}
-  </>
+  return <div className="layout">
+    <Sidebar items={navItems} page={page} sources={data?.sources} open={menuOpen} onNavigate={goTo} onClose={() => setMenuOpen(false)} />
+    <div className="main">
+      <Topbar {...PAGE_TEXT[page]} namespaces={data?.namespaces ?? []} namespace={namespace} onNamespace={(value) => navigate({ namespace: value })}
+        generatedAt={data?.generatedAt} refreshing={refreshing} onRefresh={() => void refresh()}
+        theme={theme} onTheme={() => setTheme(theme === 'light' ? 'dark' : 'light')} onMenu={() => setMenuOpen(true)} />
+      <main className="content">
+        {error ? <div className="notice" role="alert">Veri yenilenemedi: {error}{data ? ' · Son alınan veriler gösteriliyor.' : ''}</div> : null}
+        {!data ? (error ? null : <div className="loading">Veriler yükleniyor…</div>)
+          : page === 'overview' ? <Overview models={models} cronWorkflows={cronWorkflows} onNavigate={goTo} />
+          : page === 'batch' ? <Batch cronWorkflows={cronWorkflows} now={Date.parse(data.generatedAt)} />
+          : <Models key={page} type={page} models={models.filter((m) => m.type === page)} />}
+      </main>
+    </div>
+  </div>
 }

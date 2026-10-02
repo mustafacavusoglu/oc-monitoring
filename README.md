@@ -1,91 +1,121 @@
-# OpenShift Argo CronWorkflow Dashboard
+# MLOps Monitor
 
-OpenShift içinde çalışan servis, Azure Repos’taki `serving` listesinde harf duyarsız `bch` eşleşmesi bulunan projelerin JSON key’lerinden namespace üretir: key küçük harfe çevrilir ve `_` karakterleri `-` olur. Yalnızca bu namespace’ler izlenir; namespace adına `bch-` eklenmez. CronWorkflow `spec.workflowSpec` altındaki image’lardan yalnızca adı namespace/proje adını içerenler seçilir; image ID son `:` parçasından alınır ve `NEXUS_URL/bch-{namespace}/manifests/{imageId}` adresine GET atılır. HTTP 200 `exist`, 404 `missing`, diğer HTTP durumları veya bağlantı hataları `error` gösterir. Argo `CronWorkflow` ve `Workflow` kaynaklarıyla ilişkili pod’lar informer cache üzerinden izlenir.
+OpenShift üzerinde çalışan LLM modellerini, ML modellerini ve batch (Argo CronWorkflow) işlerini tek ekranda izleyen ekip dashboard’u. Sol menüden tür seçilir, üst bardan namespace filtrelenir (varsayılan: tüm namespace’ler). Seçili sayfa ve namespace URL’de tutulur (`#/batch?ns=kredi-skor`), bu yüzden filtreli görünüm link olarak paylaşılabilir.
 
-## Geliştirme ve container oluşturma
+| Sayfa | Kaynak | Sınıflandırma |
+|---|---|---|
+| LLM modelleri | `LLMInferenceService`, `InferenceService` | Her `LLMInferenceService` LLM’dir. `InferenceService`, `spec.predictor.model.runtime` ile bağlı olduğu `ServingRuntime` image’ı `LLM_RUNTIME_IMAGE_KEYWORDS` (ör. `vllm`) içeriyorsa LLM’dir. |
+| ML modelleri | `InferenceService` | Runtime image’ı `ML_RUNTIME_IMAGE_KEYWORDS` (ör. `triton`) içeriyorsa ML’dir. İki listeye de uyan runtime LLM sayılır; hiçbirine uymayanlar gösterilmez. |
+| Batch modelleri | `CronWorkflow`, `Workflow`, pod | Proje JSON’unda `serving` listesi `BATCH_SERVING_KEYWORD` (ör. `bch`) içeren projelerin namespace’leri. Proje image’ları Nexus’ta kontrol edilir. |
+
+Genel bakış sayfası tüm türlerin sayılarını, namespace dağılımını, sağlık durumunu ve “dikkat gerektirenler” listesini (hazır olmayan modeller, son çalışması başarısız olan veya image’ı Nexus’ta bulunmayan batch işleri) gösterir.
+
+## Performans
+
+- Kubernetes verisi informer cache’inden okunur; tarayıcı isteği hiçbir zaman Kubernetes, Azure veya Nexus’u beklemez.
+- Model kaynakları cluster genelinde kaynak başına tek watch ile izlenir. Batch kaynakları yalnızca seçilen namespace’lerde izlenir.
+- Cache’e alınan nesnelerden `managedFields` ve `last-applied-configuration` atılır; nesneler kopyalanmadan okunur.
+- Nexus kontrolleri arka planda yapılır, sonuçlar `IMAGE_CACHE_TTL` boyunca cache’lenir ve eşzamanlılık `REGISTRY_CHECK_CONCURRENCY` ile sınırlanır.
+- API yanıtı gzip ile, hash’li JS/CSS dosyaları build sırasında önceden sıkıştırılmış olarak ve `immutable` cache başlığıyla sunulur.
+- Arayüz `UI_REFRESH_INTERVAL` aralığıyla yenilenir, sekme gizliyken yenilemeyi durdurur. Grafikler bağımlılıksız SVG/CSS bileşenleridir.
+
+## Konfigürasyon
+
+Ortama özgü bütün değerler `deploy/openshift.yaml` içindeki `mlops-dashboard-config` ConfigMap’inden `envFrom` ile gelir. Kodda varsayılan değer yoktur; eksik veya hatalı anahtarlar açılışta tek bir hata mesajında listelenir ve servis başlamaz.
+
+| Anahtar | Açıklama |
+|---|---|
+| `HTTP_ADDR`, `WEB_DIR` | Dinlenen adres ve arayüz dosyalarının dizini (`/app/web`). |
+| `UI_REFRESH_INTERVAL` | Arayüzün yenileme aralığı (ör. `30s`). |
+| `UPSTREAM_TIMEOUT` | Azure ve Nexus HTTP istek zaman aşımı. |
+| `AZURE_REPO_URL`, `AZURE_REPO_BRANCH`, `AZURE_PROJECTS_PATH` | Proje JSON’unun Azure Repos konumu. |
+| `BATCH_SERVING_KEYWORD` | Batch projelerini seçen `serving` değeri (büyük/küçük harf duyarsız, içerir eşleşmesi). |
+| `PROJECT_REFRESH_INTERVAL` | Proje JSON’unun yenilenme aralığı. |
+| `NEXUS_MANIFEST_URL_TEMPLATE` | `{namespace}` ve `{imageId}` içeren manifest URL şablonu. |
+| `IMAGE_CACHE_TTL`, `REGISTRY_CHECK_CONCURRENCY` | Nexus sonuç cache süresi ve aynı anda yapılabilecek kontrol sayısı. |
+| `LLM_RUNTIME_IMAGE_KEYWORDS`, `ML_RUNTIME_IMAGE_KEYWORDS` | Virgülle ayrılmış ServingRuntime image anahtar kelimeleri. |
+| `GPU_RESOURCE_NAME` | GPU kaynak adı (ör. `nvidia.com/gpu`). |
+| `CRONWORKFLOW_RESOURCE`, `WORKFLOW_RESOURCE`, `INFERENCE_SERVICE_RESOURCE`, `SERVING_RUNTIME_RESOURCE`, `LLM_INFERENCE_SERVICE_RESOURCE` | İzlenen API’ler, `group/version/resource` biçiminde. Cluster’daki CRD sürümü farklıysa buradan değiştirilir. |
+
+Azure Repos anonim okumaya açık değilse PAT’i Secret olarak ekleyin; Secret’taki `AZURE_TOKEN` loglanmaz:
+
+```sh
+oc create secret generic mlops-dashboard-secrets --from-file=AZURE_TOKEN=./azure-token -n mlops-development
+```
+
+### Proje JSON’u
+
+```json
+{
+  "PAYMENTS_API": { "serving": ["BCH"], "team": "payments" },
+  "internal-tool": { "serving": ["OTHER"], "team": "platform" }
+}
+```
+
+Proje key’i küçük harfe çevrilir ve `_` karakterleri `-` olur; sonuç namespace adıdır (`PAYMENTS_API` → `payments-api`). Azure geçici olarak erişilemezse son başarılı liste kullanılmaya devam eder ve kaynak “Sorunlu” görünür.
+
+### Nexus image kontrolü
+
+CronWorkflow `spec.workflowSpec` altındaki image’lardan yalnızca adı namespace’i içerenler kontrol edilir. Image ID, image’ın son `:` parçasıdır ve şablona yerleştirilir: `.../bch-{namespace}/manifests/{imageId}` → `.../bch-yazi-girisi-model/manifests/ald7383jdls8373`. HTTP 200 `Mevcut`, 404 `Bulunamadı`, diğer durumlar `Hata` olarak gösterilir. Her istek, sonuç ve cache kullanımı `INFO` seviyesinde loglanır.
+
+## Geliştirme
 
 Go 1.24 ve Node.js 22 gerekir.
 
 ```sh
-cd web && npm ci && npm run build
-cd ..
-go build ./...
-docker build -t cronworkflow-dashboard:latest .
-```
+# Arayüzü dummy verilerle çalıştırma (backend gerekmez)
+cd web && npm ci && npm run dev    # http://localhost:5173
 
-## Dummy veriler ve testler
-
-```sh
+# Testler ve build
 go test ./... -count=1
 npm run build --prefix web
+docker build -t mustafa12/monitor:0.0.21 .
 ```
 
-`internal/projects/testdata/projects.json`, örnek namespace/`serving` verisini; `internal/cluster/testdata/` altındaki JSON dosyaları CronWorkflow, iki Workflow ve pod’ları içerir. Testler BCH namespace seçimini, son run ve bağlı pod eşleşmesini, timezone’a göre sonraki schedule’ı ve boş image referansını kontrol eder. Registry testi yerel TLS fake registry kullanır; mevcut/missing sonuçlarını ve cache hit’inde tekrar istek gitmediğini doğrular. Testler gerçek Azure, OpenShift veya şirket registry’sine bağlanmaz.
+`npm run dev`, Vite dev sunucusunda `/api/dashboard` isteğini `web/src/mock/demo.ts` içindeki deterministik dummy veriyle yanıtlar. Bu dosya yalnızca dev sunucusunda yüklenir, production bundle’a girmez.
 
-Container, `:8080` portunda API ve arayüzü aynı origin üzerinden sunar. `/healthz` liveness ve readiness probe’ları için kullanılır.
+Kod yapısı:
+
+| Paket | Görev |
+|---|---|
+| `internal/config` | ConfigMap’ten gelen ortam değişkenlerini okur ve doğrular. |
+| `internal/cluster` | Değişen namespace kümesi için genel informer watcher’ı. |
+| `internal/projects` | Azure Repos’tan proje JSON’unu okuyup batch namespace’lerini seçer. |
+| `internal/batch` | CronWorkflow satırlarını, çalışma geçmişini ve image kontrollerini üretir. |
+| `internal/serving` | InferenceService/LLMInferenceService’leri LLM/ML olarak sınıflandırır. |
+| `internal/registry` | Nexus manifest kontrolü ve TTL cache. |
+| `internal/dashboard` | Tek JSON uç noktası: `GET /api/dashboard`. |
+| `web/src` | React arayüzü: `pages/` (sayfalar), `components/` (tablo, KPI, grafikler), `lib/` (durum, format, polling, routing). |
 
 ## OpenShift kurulumu
 
-`deploy/openshift.yaml` içindeki `cronworkflow-dashboard-config` ConfigMap’ini kurumunuzun değerleriyle güncelleyin. `AZURE_REPO_URL`, branch ve path proje JSON’unu almak içindir. `NEXUS_URL`, CronWorkflow image tag’inden çıkarılan ID’nin ekleneceği temel URL’dir. Diğer servis ayarları da ConfigMap’ten `envFrom` ile alınır. Namespace varsayılanı `workflow-monitoring`.
-
-Deployment, amd64 ve arm64 platformlarını içeren Docker Hub’daki `mustafa12/monitor:0.0.20` image’ını kullanır. Uygulamanın kontrol ettiği Nexus endpoint’i ayrı `NEXUS_URL` ConfigMap ayarıdır; image dağıtım registry’siyle karıştırılmamalıdır.
+Manifest, mevcut `mlops-development` projesine kurulur:
 
 ```sh
 oc apply -f deploy/openshift.yaml
 ```
 
-Örnek `project.json` yapısı:
+ConfigMap değerlerini kurumunuza göre güncelleyin. Deployment `/healthz` ile probe edilir, `:8080` portunda API ve arayüzü aynı origin’den sunar ve Route üzerinden TLS edge ile yayınlanır.
 
-```json
-{
-  "payments-api": {
-    "serving": ["BCH"],
-    "team": "payments"
-  },
-  "internal-tool": {
-    "serving": ["OTHER"],
-    "team": "platform"
-  }
-}
-```
+### RBAC
 
-JSON’un kök seviyesi proje key’lerinin bulunduğu bir object olmalıdır. `serving` alanında `bch` bulunan projelerin key’leri namespace’e dönüştürülür; eşleştirme büyük/küçük harfe duyarsızdır ve `Type` alanı zorunlu değildir. Namespace’ler proje refresh aralığında yenilenir. Azure kaynağı geçici olarak erişilemezse son başarılı namespace listesi kullanılmaya devam eder ve kaynak “degraded” görünür.
+ServiceAccount’a ClusterRole ile yalnızca `get`, `list`, `watch` izni verilir:
 
-### Azure kimlik doğrulaması
+- `argoproj.io`: `cronworkflows`, `workflows`
+- core: `pods`
+- `serving.kserve.io`: `inferenceservices`, `servingruntimes`, `llminferenceservices`
 
-Azure Repos anonim okumaya açık değilse PAT’i Secret’a ekleyin. Deployment Secret değerlerini `envFrom.secretRef` ile alır:
+Model kaynakları cluster genelinde izlendiği için ClusterRoleBinding gerekir; batch okumaları yalnızca seçilen namespace’lerle sınırlıdır. Kapsamı platform ekibinizle doğrulayın. Cluster’da `LLMInferenceService` CRD’si yoksa model kaynağı “Sorunlu” görünür; diğer veriler etkilenmez.
 
-```sh
-oc create secret generic cronworkflow-dashboard-secrets \
-  --from-file=AZURE_TOKEN=./azure-token \
-  -n workflow-monitoring
-```
+### Ağ erişimi
 
-Azure DevOps erişimi gerekiyorsa ilgili token’a repo içeriğini okuma yetkisi verin. PAT’in Secret key’i `AZURE_TOKEN` olmalıdır. Pod’a Secret’tan ortam değişkeni olarak aktarılır; loglanmaz.
+Uygulama kullanıcı girişi sunmaz. Route’u yalnızca iç ağdan erişilebilir tutun veya kurumunuzun ingress, firewall ve kimlik doğrulama katmanlarıyla erişimi sınırlandırın. Pod’un Kubernetes API’sine, Azure Repos’a ve Nexus’a HTTPS ile erişebilmesi gerekir.
 
-Nexus kontrolü anonim HTTP GET kullanır; bu sürümde Nexus username/password yoktur. CronWorkflow `spec.workflowSpec` altındaki image adı normalize namespace/proje adını içermiyorsa kontrol edilmez. Eşleşen image değerinin son `:` parçası image ID kabul edilir ve slash ile biten `NEXUS_URL` sonuna `bch-{namespace}/manifests/{imageId}` eklenir (örnek: `https://repomaster.company.com/repository/company-private/v2/mlops/bch-yazi-girisi-model/manifests/ald7383jdls8373`). Arayüzde image ID ve isteğin tam URL’si gösterilir. Her dashboard lookup’ı, başlatılan kontrol sayısını ve cache durumunu `INFO` seviyesinde pod loguna yazar; gerçek GET URL’si ile sonuç/hata da `INFO` seviyesinde loglanır. Yanıt 200 ise `exist`, 404 ise `missing`, diğer HTTP durumları veya istek hataları `error` durumudur. Sonuçlar varsayılan olarak 24 saat cache’lenir; `IMAGE_CACHE_TTL` ile değiştirilebilir. Aynı anda yapılan kontroller `REGISTRY_CHECK_CONCURRENCY` ile sınırlanır.
+## Durum kuralları
 
-## Kubernetes ve Argo erişimi
-
-Deployment cluster içinde ServiceAccount kullanır. ClusterRole yalnızca aşağıdaki kaynaklara `get`, `list`, `watch` izni verir:
-
-- `argoproj.io/cronworkflows`
-- `argoproj.io/workflows`
-- core `pods`
-
-ClusterRoleBinding bu okumayı cluster genelinde seçilen namespace’lere uygular; Kubernetes list/watch çağrıları yalnızca proje JSON’unda BCH olarak seçilen namespace’lere namespace-scoped yapılır. Argo Workflows CRD’lerinin `argoproj.io/v1alpha1` sürümü cluster’da kurulu olmalıdır. RBAC verilmeden önce manifestteki ClusterRoleBinding kapsamını platform ekibinizle doğrulayın.
-
-Servis varsayılan olarak 5 dakikada Azure project JSON’u ve namespace values dosyalarını yeniler; Nexus image sonuçlarını 24 saat cache’ler. Arayüz API’yi 30 saniyede yeniler. Dashboard isteği cache süresi dolmuş image kontrollerini başlatır; günlük cache aynı image için tekrarlanan Nexus isteklerini sınırlar. Kubernetes okumaları her tarayıcı isteğinde tekrarlanmaz; informer cache’den sunulur.
-
-## Ağ erişimi
-
-Uygulama kullanıcı girişi sunmaz. Route’u yalnızca iç ağdan erişilebilir tutun veya kurumunuzun ingress, firewall ve kimlik doğrulama katmanlarıyla erişimi sınırlandırın. Pod’un Azure Repos ve gerekli container registry endpoint’lerine çıkış izni olmalıdır.
-
-## Gösterilen durumlar
-
-- Workflow listesi Azure’daki BCH namespace’leriyle sınırlıdır.
-- Son retained Workflow, `workflows.argoproj.io/scheduled-time` annotation’ına göre seçilir; yoksa creation time kullanılır. Workflow history prune edilmişse son schedule bilgisi gösterilir, run status “Unavailable” kalır.
+- Model durumu kaynağın `Ready` condition’ından gelir: `True` → Hazır, `False` → Hazır değil (reason/message gösterilir), condition yoksa Bilinmiyor.
+- Ayrılan GPU = replika başına GPU limiti (yoksa request) × `minReplicas` (belirtilmemişse 1).
+- CronWorkflow’un son çalışması `workflows.argoproj.io/scheduled-time` annotation’ına, yoksa creation time’a göre seçilir. Çalışma geçmişi Argo’nun sakladığı Workflow’lardan oluşur (en fazla son 10 gösterilir).
 - Pod’lar `workflows.argoproj.io/workflow` etiketiyle Workflow’a bağlanır.
-- Zamanlama hesabında CronWorkflow timezone’u kullanılır. Timezone alanı yoksa next run UTC varsayımıyla hesaplanır ve uyarı gösterilir.
-- Namespace, Workflow status ve image status filtreleri birlikte kullanılabilir.
-- Azure, OpenShift ve container registry kaynak durumları ile en son başarılı güncellenme zamanı sayfanın üstünde gösterilir. Image HTTP/bağlantı hataları image satırında `error` görünür ve registry kaynağını `degraded` yapar; geçersiz veya boş image referansı `unknown` görünür.
+- Sonraki çalışma CronWorkflow timezone’uyla hesaplanır; timezone yoksa UTC varsayılır ve uyarı gösterilir.
+- Kaynak durumları (model, batch, proje listesi, Nexus) ve son başarılı güncellenme zamanları sol menünün altında gösterilir.

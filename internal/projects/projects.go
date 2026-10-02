@@ -30,6 +30,7 @@ type projectTarget struct {
 type Source struct {
 	client   *azureClient
 	interval time.Duration
+	keyword  string
 
 	mu       sync.RWMutex
 	snapshot Snapshot
@@ -39,6 +40,7 @@ func NewSource(cfg config.Config, client *http.Client) *Source {
 	return &Source{
 		client:   newAzureClient(cfg, client),
 		interval: cfg.ProjectRefreshInterval,
+		keyword:  strings.ToLower(cfg.BatchServingKeyword),
 		snapshot: Snapshot{Stale: true, Error: "waiting for first project refresh"},
 	}
 }
@@ -74,14 +76,14 @@ func (s *Source) refresh(ctx context.Context) {
 	if err == nil {
 		log.Printf("project source fetched project metadata: entries=%d", len(projects))
 		var namespaces []string
-		namespaces, err = selectBCHNamespaces(projects)
+		namespaces, err = selectNamespaces(projects, s.keyword)
 		if err == nil {
-			log.Printf("project source generated BCH namespaces: project_entries=%d namespaces=%q", len(projects), namespaces)
+			log.Printf("project source generated batch namespaces: keyword=%q project_entries=%d namespaces=%q", s.keyword, len(projects), namespaces)
 			now := time.Now().UTC()
 			s.mu.Lock()
 			s.snapshot = Snapshot{Namespaces: namespaces, LastSuccess: &now}
 			s.mu.Unlock()
-			log.Printf("project source refresh completed: project_entries=%d BCH_namespaces=%d", len(projects), len(namespaces))
+			log.Printf("project source refresh completed: project_entries=%d batch_namespaces=%d", len(projects), len(namespaces))
 			return
 		}
 	}
@@ -97,8 +99,10 @@ func (s *Source) markStale(err error) {
 	s.mu.Unlock()
 }
 
-func selectBCHNamespaces(projects map[string]json.RawMessage) ([]string, error) {
-	targets, err := projectTargets(projects)
+// selectNamespaces returns the namespaces of projects whose `serving` list
+// contains keyword (lowercase, substring match).
+func selectNamespaces(projects map[string]json.RawMessage, keyword string) ([]string, error) {
+	targets, err := projectTargets(projects, keyword)
 	if err != nil {
 		return nil, err
 	}
@@ -111,7 +115,7 @@ func selectBCHNamespaces(projects map[string]json.RawMessage) ([]string, error) 
 	return namespaces, nil
 }
 
-func projectTargets(projects map[string]json.RawMessage) ([]projectTarget, error) {
+func projectTargets(projects map[string]json.RawMessage, keyword string) ([]projectTarget, error) {
 	targets := make([]projectTarget, 0)
 	seenNamespaces := make(map[string]string, len(projects))
 	for projectKey, rawProject := range projects {
@@ -119,7 +123,10 @@ func projectTargets(projects map[string]json.RawMessage) ([]projectTarget, error
 		if err := json.Unmarshal(rawProject, &project); err != nil || project == nil {
 			return nil, fmt.Errorf("project %q must contain a JSON object", projectKey)
 		}
-		namespace := strings.ToLower(strings.ReplaceAll(projectKey, "_", "-"))
+		namespace := strings.ToLower(strings.ReplaceAll(strings.TrimSpace(projectKey), "_", "-"))
+		if namespace == "" {
+			return nil, fmt.Errorf("project keys must not be empty")
+		}
 		if previous, found := seenNamespaces[namespace]; found {
 			return nil, fmt.Errorf("project keys %q and %q normalize to the same namespace %q", previous, projectKey, namespace)
 		}
@@ -135,7 +142,7 @@ func projectTargets(projects map[string]json.RawMessage) ([]projectTarget, error
 				return nil, fmt.Errorf("project %q serving must be a string array", projectKey)
 			}
 			for _, value := range serving {
-				if strings.Contains(strings.ToLower(strings.TrimSpace(value)), "bch") {
+				if strings.Contains(strings.ToLower(strings.TrimSpace(value)), keyword) {
 					target.CheckImages = true
 					break
 				}

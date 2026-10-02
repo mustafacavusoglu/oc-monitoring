@@ -1,0 +1,20 @@
+[
+  {
+    "apiVersion": "serving.kserve.io/v1alpha1",
+    "kind": "ServingRuntime",
+    "metadata": { "name": "vllm-runtime", "namespace": "chatbot" },
+    "spec": { "containers": [{ "name": "kserve-container", "image": "quay.io/modh/vllm:rhoai-2.19" }] }
+  },
+  {
+    "apiVersion": "serving.kserve.io/v1alpha1",
+    "kind": "ServingRuntime",
+    "metadata": { "name": "triton-runtime", "namespace": "fraud" },
+    "spec": { "containers": [{ "name": "kserve-container", "image": "nvcr.io/nvidia/tritonserver:24.08-py3" }] }
+  },
+  {
+    "apiVersion": "serving.kserve.io/v1alpha1",
+    "kind": "ServingRuntime",
+    "metadata": { "name": "ovms", "namespace": "fraud" },
+    "spec": { "containers": [{ "name": "kserve-container", "image": "quay.io/modh/openvino_model_server:2024.3" }] }
+  }
+]

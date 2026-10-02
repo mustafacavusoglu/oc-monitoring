@@ -1,3 +1,6 @@
+// Package registry checks whether image manifests exist in Nexus. Lookups
+// never block a dashboard request: results are served from a TTL cache and
+// expired or unknown URLs are refreshed in the background.
 package registry
 
 import (
@@ -14,15 +17,11 @@ import (
 	"monitor/internal/model"
 )
 
-const (
-	requestTimeout = 10 * time.Second
-	manifestAccept = "application/vnd.docker.distribution.manifest.v2+json, " +
-		"application/vnd.docker.distribution.manifest.list.v2+json, " +
-		"application/vnd.oci.image.manifest.v1+json, " +
-		"application/vnd.oci.image.index.v1+json, " +
-		"application/cnd.docker.distribution.manifest.v1+prettyjws, " +
-		"application/json"
-)
+const manifestAccept = "application/vnd.docker.distribution.manifest.v2+json, " +
+	"application/vnd.docker.distribution.manifest.list.v2+json, " +
+	"application/vnd.oci.image.manifest.v1+json, " +
+	"application/vnd.oci.image.index.v1+json, " +
+	"application/json"
 
 type cacheEntry struct {
 	result    model.ImageResult
@@ -30,201 +29,109 @@ type cacheEntry struct {
 }
 
 type Checker struct {
-	baseURL       string
-	ttl           time.Duration
-	maxConcurrent int
-	client        *http.Client
-	slots         chan struct{}
-	cache         map[string]cacheEntry
-	mu            sync.Mutex
-	inflight      map[string]chan struct{}
+	urlTemplate string
+	ttl         time.Duration
+	client      *http.Client
+	slots       chan struct{}
+
+	mu       sync.Mutex
+	cache    map[string]cacheEntry
+	inflight map[string]struct{}
 }
 
-func NewChecker(baseURL string, ttl time.Duration, maxConcurrent int) (*Checker, error) {
-	if ttl <= 0 {
-		return nil, fmt.Errorf("image cache TTL must be positive")
-	}
-	if maxConcurrent < 1 {
-		return nil, fmt.Errorf("registry concurrency must be positive")
-	}
+func NewChecker(urlTemplate string, ttl time.Duration, maxConcurrent int, timeout time.Duration) *Checker {
 	return &Checker{
-		baseURL:       strings.TrimRight(baseURL, "/"),
-		ttl:           ttl,
-		maxConcurrent: maxConcurrent,
-		client:        &http.Client{Timeout: requestTimeout},
-		slots:         make(chan struct{}, maxConcurrent),
-		cache:         make(map[string]cacheEntry),
-		inflight:      make(map[string]chan struct{}),
-	}, nil
+		urlTemplate: urlTemplate,
+		ttl:         ttl,
+		client:      &http.Client{Timeout: timeout},
+		slots:       make(chan struct{}, maxConcurrent),
+		cache:       make(map[string]cacheEntry),
+		inflight:    make(map[string]struct{}),
+	}
 }
 
-func (c *Checker) Lookup(ctx context.Context, refs []string) map[string]model.ImageResult {
+// ManifestURL fills the configured template's {namespace} and {imageId}.
+func (c *Checker) ManifestURL(namespace, imageID string) string {
+	return strings.NewReplacer(
+		"{namespace}", url.PathEscape(namespace),
+		"{imageId}", url.PathEscape(imageID),
+	).Replace(c.urlTemplate)
+}
+
+// Lookup returns the cached result for each URL, or "checking" while a
+// background refresh is running.
+func (c *Checker) Lookup(ctx context.Context, urls []string) map[string]model.ImageResult {
 	background := context.WithoutCancel(ctx)
-	results := make(map[string]model.ImageResult, len(refs))
+	results := make(map[string]model.ImageResult, len(urls))
 	started, cacheHits, inFlight := 0, 0, 0
 	now := time.Now()
-	for _, ref := range refs {
-		if _, done := results[ref]; done {
+	c.mu.Lock()
+	for _, manifestURL := range urls {
+		if _, done := results[manifestURL]; done {
 			continue
 		}
-		c.mu.Lock()
-		entry, cached := c.cache[ref]
-		_, running := c.inflight[ref]
-		start := (!cached || !now.Before(entry.expiresAt)) && !running
-		if start {
-			started++
-		} else if cached && now.Before(entry.expiresAt) {
+		entry, cached := c.cache[manifestURL]
+		_, running := c.inflight[manifestURL]
+		fresh := cached && now.Before(entry.expiresAt)
+		switch {
+		case fresh:
 			cacheHits++
-		} else {
+		case running:
 			inFlight++
+		default:
+			started++
+			c.inflight[manifestURL] = struct{}{}
+			go c.refresh(background, manifestURL)
 		}
-		if start {
-			c.inflight[ref] = make(chan struct{})
-		}
-		c.mu.Unlock()
 		if cached {
-			results[ref] = entry.result
+			results[manifestURL] = entry.result
 		} else {
-			results[ref] = model.ImageResult{Reference: ref, Status: "checking"}
+			results[manifestURL] = model.ImageResult{Reference: manifestURL, URL: manifestURL, Status: model.ImageChecking}
 		}
-
-		if start {
-			go c.refresh(background, ref)
-		}
-
 	}
+	c.mu.Unlock()
 	slog.Info("registry image check cycle", "references", len(results), "started", started, "cache_hits", cacheHits, "in_flight", inFlight)
 	return results
 }
 
-func (c *Checker) refresh(ctx context.Context, imageID string) {
+func (c *Checker) refresh(ctx context.Context, manifestURL string) {
 	c.slots <- struct{}{}
-	result := c.get(ctx, imageID)
+	result := c.get(ctx, manifestURL)
 	<-c.slots
 	c.mu.Lock()
-	c.cache[imageID] = cacheEntry{result: result, expiresAt: time.Now().Add(c.ttl)}
-	if wait, ok := c.inflight[imageID]; ok {
-		delete(c.inflight, imageID)
-		close(wait)
-	}
+	c.cache[manifestURL] = cacheEntry{result: result, expiresAt: time.Now().Add(c.ttl)}
+	delete(c.inflight, manifestURL)
 	c.mu.Unlock()
 }
 
-func (c *Checker) Check(ctx context.Context, refs []string) map[string]model.ImageResult {
-	results := make(map[string]model.ImageResult, len(refs))
-	jobs := make(chan string)
-	var wg sync.WaitGroup
-	var resultsMu sync.Mutex
-	workers := min(len(refs), c.maxConcurrent)
-	for range workers {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			for imageID := range jobs {
-				result := c.checkOne(ctx, imageID)
-				resultsMu.Lock()
-				results[imageID] = result
-				resultsMu.Unlock()
-			}
-		}()
-	}
-	for _, imageID := range refs {
-		jobs <- imageID
-	}
-	close(jobs)
-	wg.Wait()
-	return results
-}
-
-func (c *Checker) checkOne(ctx context.Context, imageID string) model.ImageResult {
-	requestURL, urlErr := c.requestURL(imageID)
-	for {
-		if err := ctx.Err(); err != nil {
-			return model.ImageResult{Reference: imageID, Status: "unknown", Error: "lookup cancelled"}
-		}
-		c.mu.Lock()
-		if entry, ok := c.cache[imageID]; ok && time.Now().Before(entry.expiresAt) {
-			c.mu.Unlock()
-			if urlErr == nil {
-				slog.Info("registry image check cache hit", "url", requestURL, "state", entry.result.Status)
-			}
-			return entry.result
-		}
-		if wait, ok := c.inflight[imageID]; ok {
-			c.mu.Unlock()
-			select {
-			case <-wait:
-				continue
-			case <-ctx.Done():
-				return model.ImageResult{Reference: imageID, Status: "unknown", Error: "lookup cancelled"}
-			}
-		}
-		wait := make(chan struct{})
-		c.inflight[imageID] = wait
-		c.mu.Unlock()
-
-		select {
-		case c.slots <- struct{}{}:
-		case <-ctx.Done():
-			c.mu.Lock()
-			delete(c.inflight, imageID)
-			close(wait)
-			c.mu.Unlock()
-			return model.ImageResult{Reference: imageID, Status: "unknown", Error: "lookup cancelled"}
-		}
-		result := c.get(ctx, imageID)
-		<-c.slots
-		c.mu.Lock()
-		if ctx.Err() == nil {
-			c.cache[imageID] = cacheEntry{result: result, expiresAt: time.Now().Add(c.ttl)}
-		}
-		delete(c.inflight, imageID)
-		close(wait)
-		c.mu.Unlock()
-		return result
-	}
-}
-
-func (c *Checker) get(ctx context.Context, imageID string) model.ImageResult {
+func (c *Checker) get(ctx context.Context, manifestURL string) model.ImageResult {
 	checkedAt := time.Now().UTC()
-	result := model.ImageResult{Reference: imageID, CheckedAt: &checkedAt, Status: "error"}
-	requestURL, err := c.requestURL(imageID)
-	if err != nil {
+	result := model.ImageResult{Reference: manifestURL, URL: manifestURL, CheckedAt: &checkedAt, Status: model.ImageError}
+	fail := func(err error) model.ImageResult {
 		result.Error = err.Error()
-		slog.Info("registry image check failed", "reference", imageID, "error", err)
+		slog.Info("registry image check failed", "method", http.MethodGet, "url", manifestURL, "error", err)
 		return result
 	}
-	result.URL = requestURL
-	slog.Info("registry image check request", "method", http.MethodGet, "url", requestURL)
-	requestCtx, cancel := context.WithTimeout(ctx, requestTimeout)
-	defer cancel()
-	req, err := http.NewRequestWithContext(requestCtx, http.MethodGet, requestURL, nil)
+	slog.Info("registry image check request", "method", http.MethodGet, "url", manifestURL)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, manifestURL, nil)
 	if err != nil {
-		result.Error = err.Error()
-		slog.Info("registry image check failed", "method", http.MethodGet, "url", requestURL, "error", err)
-		return result
+		return fail(err)
 	}
 	req.Header.Set("Accept", manifestAccept)
 	resp, err := c.client.Do(req)
 	if err != nil {
-		result.Error = err.Error()
-		slog.Info("registry image check failed", "method", http.MethodGet, "url", requestURL, "error", err)
-		return result
+		return fail(err)
 	}
 	_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 1<<20))
 	resp.Body.Close()
 	switch resp.StatusCode {
 	case http.StatusOK:
-		result.Status = "exist"
+		result.Status = model.ImageExist
 	case http.StatusNotFound:
-		result.Status = "missing"
+		result.Status = model.ImageMissing
 	default:
 		result.Error = fmt.Sprintf("unexpected HTTP status %d", resp.StatusCode)
 	}
-	slog.Info("registry image check result", "url", requestURL, "status", resp.StatusCode, "state", result.Status)
+	slog.Info("registry image check result", "url", manifestURL, "status", resp.StatusCode, "state", result.Status)
 	return result
-}
-
-func (c *Checker) requestURL(imageID string) (string, error) {
-	return url.JoinPath(c.baseURL, imageID)
 }

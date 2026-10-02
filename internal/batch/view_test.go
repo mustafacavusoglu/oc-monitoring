@@ -1,24 +1,22 @@
-package cluster
+package batch
 
 import (
-	"encoding/json"
-	"os"
 	"reflect"
 	"testing"
 	"time"
 
-	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+	"monitor/internal/testutil"
 )
 
 func TestBuildViewsMapsLatestWorkflowPodsAndSchedule(t *testing.T) {
-	snapshot := Snapshot{
-		CronWorkflows: loadObjects(t, "testdata/cronworkflows.json"),
-		Workflows:     loadObjects(t, "testdata/workflows.json"),
-		Pods:          loadObjects(t, "testdata/pods.json"),
-	}
 	now := time.Date(2026, 9, 27, 11, 15, 0, 0, time.UTC)
 
-	views := BuildViews(snapshot, now)
+	views := BuildViews(
+		testutil.LoadObjects(t, "testdata/cronworkflows.json"),
+		testutil.LoadObjects(t, "testdata/workflows.json"),
+		testutil.LoadObjects(t, "testdata/pods.json"),
+		now,
+	)
 	if len(views) != 1 {
 		t.Fatalf("workflow rows = %d, want 1", len(views))
 	}
@@ -28,6 +26,9 @@ func TestBuildViewsMapsLatestWorkflowPodsAndSchedule(t *testing.T) {
 	}
 	if view.LastRun == nil || view.LastRun.Name != "payout-latest" || view.LastRun.Phase != "Running" {
 		t.Fatalf("last run = %#v, want payout-latest Running", view.LastRun)
+	}
+	if len(view.History) != 2 || view.History[0].Name != "payout-latest" || view.History[1].Phase != "Failed" {
+		t.Fatalf("history = %#v, want newest-first latest then failed older run", view.History)
 	}
 	if view.LastRun.ScheduledAt == nil || !view.LastRun.ScheduledAt.Equal(time.Date(2026, 9, 27, 11, 0, 0, 0, time.UTC)) {
 		t.Fatalf("scheduled time = %v", view.LastRun.ScheduledAt)
@@ -49,21 +50,4 @@ func TestBuildViewsMapsLatestWorkflowPodsAndSchedule(t *testing.T) {
 	if !reflect.DeepEqual(images, wantImages) {
 		t.Fatalf("images = %v, want %v", images, wantImages)
 	}
-}
-
-func loadObjects(t *testing.T, file string) []*unstructured.Unstructured {
-	t.Helper()
-	data, err := os.ReadFile(file)
-	if err != nil {
-		t.Fatal(err)
-	}
-	var objects []map[string]any
-	if err := json.Unmarshal(data, &objects); err != nil {
-		t.Fatal(err)
-	}
-	result := make([]*unstructured.Unstructured, 0, len(objects))
-	for _, object := range objects {
-		result = append(result, &unstructured.Unstructured{Object: object})
-	}
-	return result
 }

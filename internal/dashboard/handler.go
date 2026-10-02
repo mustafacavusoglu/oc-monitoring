@@ -1,31 +1,41 @@
+// Package dashboard serves the single JSON snapshot the web UI renders.
 package dashboard
 
 import (
+	"compress/gzip"
 	"context"
 	"encoding/json"
-	"fmt"
+	"io"
+	"log"
 	"net/http"
 	"sort"
+	"strings"
 	"time"
 
+	"monitor/internal/batch"
 	"monitor/internal/cluster"
+	"monitor/internal/config"
 	"monitor/internal/model"
 	"monitor/internal/projects"
-	"monitor/internal/registry"
+	"monitor/internal/serving"
 )
 
+// Sources are the read-only views the handler combines. Every call is served
+// from in-memory caches, so a request never waits on Kubernetes, Azure or Nexus.
+type Sources struct {
+	Projects func() projects.Snapshot
+	Batch    func() cluster.Snapshot
+	Models   func() cluster.Snapshot
+	Images   batch.ImageChecker
+}
+
 type Handler struct {
-	projectSnapshot func() projects.Snapshot
-	clusterSnapshot func() cluster.Snapshot
-	checkImages     func(context.Context, []string) map[string]model.ImageResult
+	sources Sources
+	cfg     config.Config
 }
 
-func NewHandler(projectsSource *projects.Source, watcher *cluster.Watcher, checker *registry.Checker) http.Handler {
-	return newHandler(projectsSource.Snapshot, watcher.Snapshot, checker.Lookup)
-}
-
-func newHandler(projectSnapshot func() projects.Snapshot, clusterSnapshot func() cluster.Snapshot, checkImages func(context.Context, []string) map[string]model.ImageResult) http.Handler {
-	return &Handler{projectSnapshot: projectSnapshot, clusterSnapshot: clusterSnapshot, checkImages: checkImages}
+func NewHandler(sources Sources, cfg config.Config) *Handler {
+	return &Handler{sources: sources, cfg: cfg}
 }
 
 func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -38,94 +48,74 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
-	response := h.snapshot(r.Context())
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
 	w.Header().Set("Cache-Control", "no-store")
-	if err := json.NewEncoder(w).Encode(response); err != nil {
-		return
+	w.Header().Set("Vary", "Accept-Encoding")
+	var out io.Writer = w
+	if strings.Contains(r.Header.Get("Accept-Encoding"), "gzip") {
+		w.Header().Set("Content-Encoding", "gzip")
+		gz := gzip.NewWriter(w)
+		defer gz.Close()
+		out = gz
+	}
+	if err := json.NewEncoder(out).Encode(h.snapshot(r.Context(), time.Now().UTC())); err != nil {
+		log.Printf("dashboard response: %v", err)
 	}
 }
 
-func (h *Handler) snapshot(ctx context.Context) model.DashboardResponse {
-	now := time.Now().UTC()
-	projectSnapshot := h.projectSnapshot()
-	clusterSnapshot := h.clusterSnapshot()
-	views := cluster.BuildViews(clusterSnapshot, now)
-	allowed := make(map[string]struct{}, len(projectSnapshot.Namespaces))
-	for _, namespace := range projectSnapshot.Namespaces {
-		allowed[namespace] = struct{}{}
-	}
-	filtered := views[:0]
-	for _, view := range views {
-		if _, ok := allowed[view.Namespace]; ok {
-			filtered = append(filtered, view)
-		}
-	}
-	views = filtered
-	images := make([]string, 0)
-	imageRefs := make(map[string]map[string]string, len(views))
-	for i := range views {
-		for j := range views[i].Images {
-			image := &views[i].Images[j]
-			if image.ImageID == "" {
-				continue
-			}
-			ref := fmt.Sprintf("bch-%s/manifests/%s", views[i].Namespace, image.ImageID)
-			images = append(images, ref)
-			if imageRefs[views[i].Namespace] == nil {
-				imageRefs[views[i].Namespace] = make(map[string]string)
-			}
-			imageRefs[views[i].Namespace][image.Reference] = ref
-		}
-	}
-	imageResults := h.checkImages(ctx, images)
-	registryHealth := model.SourceHealth{State: "ready"}
-	failedImages := 0
-	seenFailed := make(map[string]struct{})
-	for i := range views {
-		for j := range views[i].Images {
-			image := &views[i].Images[j]
-			ref := imageRefs[views[i].Namespace][image.Reference]
-			if ref == "" {
-				continue
-			}
-			result, found := imageResults[ref]
-			if !found {
-				continue
-			}
-			image.URL = result.URL
-			image.Status = result.Status
-			image.Error = result.Error
-			image.CheckedAt = result.CheckedAt
-			if result.Status == "error" || result.Status == "unknown" {
-				if _, seen := seenFailed[result.Reference]; !seen {
-					seenFailed[result.Reference] = struct{}{}
-					failedImages++
-				}
-			} else if result.CheckedAt != nil && (registryHealth.LastSuccess == nil || result.CheckedAt.After(*registryHealth.LastSuccess)) {
-				checkedAt := *result.CheckedAt
-				registryHealth.LastSuccess = &checkedAt
-			}
-		}
-	}
-	if failedImages > 0 {
-		registryHealth.State = "degraded"
-		registryHealth.Error = fmt.Sprintf("%d image checks failed", failedImages)
+func (h *Handler) snapshot(ctx context.Context, now time.Time) model.DashboardResponse {
+	projectSnapshot := h.sources.Projects()
+	batchSnapshot := h.sources.Batch()
+	modelSnapshot := h.sources.Models()
+	res := h.cfg.Resources
+
+	cronWorkflows := batch.BuildViews(
+		batchSnapshot.Objects[res.CronWorkflows],
+		batchSnapshot.Objects[res.Workflows],
+		batchSnapshot.Objects[cluster.Pods],
+		now,
+	)
+	models := serving.BuildModels(
+		modelSnapshot.Objects[res.InferenceServices],
+		modelSnapshot.Objects[res.ServingRuntimes],
+		modelSnapshot.Objects[res.LLMInferenceServices],
+		h.cfg.Serving,
+	)
+
+	projectHealth := model.SourceHealth{State: model.StateReady, LastSuccess: projectSnapshot.LastSuccess}
+	if projectSnapshot.Stale {
+		projectHealth.State, projectHealth.Error = model.StateDegraded, projectSnapshot.Error
 	}
 
-	projectHealth := model.SourceHealth{State: "ready", LastSuccess: projectSnapshot.LastSuccess}
-	if projectSnapshot.Stale {
-		projectHealth.State = "degraded"
-		projectHealth.Error = projectSnapshot.Error
-	}
-	namespaces := append([]string{}, projectSnapshot.Namespaces...)
-	sort.Strings(namespaces)
 	return model.DashboardResponse{
-		GeneratedAt:    now,
-		ProjectSource:  projectHealth,
-		ClusterSource:  clusterSnapshot.Health,
-		RegistrySource: registryHealth,
-		Namespaces:     namespaces,
-		CronWorkflows:  views,
+		GeneratedAt:            now,
+		RefreshIntervalSeconds: int(h.cfg.UIRefreshInterval.Seconds()),
+		Sources: model.Sources{
+			Projects: projectHealth,
+			Batch:    batchSnapshot.Health,
+			Models:   modelSnapshot.Health,
+			Registry: batch.ResolveImages(ctx, cronWorkflows, h.sources.Images),
+		},
+		Namespaces:    namespaces(projectSnapshot.Namespaces, models),
+		Models:        models,
+		CronWorkflows: cronWorkflows,
 	}
+}
+
+// namespaces lists every namespace the UI can filter by: watched batch
+// namespaces plus the namespaces that host a model.
+func namespaces(batchNamespaces []string, models []model.Model) []string {
+	seen := make(map[string]struct{}, len(batchNamespaces)+len(models))
+	for _, namespace := range batchNamespaces {
+		seen[namespace] = struct{}{}
+	}
+	for _, m := range models {
+		seen[m.Namespace] = struct{}{}
+	}
+	result := make([]string, 0, len(seen))
+	for namespace := range seen {
+		result = append(result, namespace)
+	}
+	sort.Strings(result)
+	return result
 }

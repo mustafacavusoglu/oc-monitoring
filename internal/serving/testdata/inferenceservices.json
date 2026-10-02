@@ -1,0 +1,49 @@
+[
+  {
+    "apiVersion": "serving.kserve.io/v1beta1",
+    "kind": "InferenceService",
+    "metadata": { "name": "llama-chat", "namespace": "chatbot", "creationTimestamp": "2026-09-20T08:00:00Z" },
+    "spec": {
+      "predictor": {
+        "minReplicas": 1,
+        "maxReplicas": 3,
+        "model": {
+          "runtime": "vllm-runtime",
+          "modelFormat": { "name": "vLLM" },
+          "storageUri": "s3://models/llama-3-8b",
+          "resources": { "limits": { "nvidia.com/gpu": "2" } }
+        }
+      }
+    },
+    "status": {
+      "url": "https://llama-chat-chatbot.apps.example.test",
+      "conditions": [
+        { "type": "PredictorReady", "status": "True" },
+        { "type": "Ready", "status": "True", "lastTransitionTime": "2026-09-20T08:05:00Z" }
+      ]
+    }
+  },
+  {
+    "apiVersion": "serving.kserve.io/v1beta1",
+    "kind": "InferenceService",
+    "metadata": { "name": "fraud-xgb", "namespace": "fraud" },
+    "spec": { "predictor": { "model": { "runtime": "triton-runtime", "modelFormat": { "name": "onnx" }, "storageUri": "s3://models/fraud" } } },
+    "status": {
+      "conditions": [
+        { "type": "Ready", "status": "False", "reason": "RevisionMissing", "message": "Revision failed to become ready", "lastTransitionTime": "2026-09-27T10:00:00Z" }
+      ]
+    }
+  },
+  {
+    "apiVersion": "serving.kserve.io/v1beta1",
+    "kind": "InferenceService",
+    "metadata": { "name": "openvino-model", "namespace": "fraud" },
+    "spec": { "predictor": { "model": { "runtime": "ovms", "modelFormat": { "name": "openvino_ir" } } } }
+  },
+  {
+    "apiVersion": "serving.kserve.io/v1beta1",
+    "kind": "InferenceService",
+    "metadata": { "name": "dangling-runtime", "namespace": "chatbot" },
+    "spec": { "predictor": { "model": { "runtime": "does-not-exist" } } }
+  }
+]

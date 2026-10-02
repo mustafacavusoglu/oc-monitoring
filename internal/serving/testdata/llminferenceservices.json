@@ -1,0 +1,17 @@
+[
+  {
+    "apiVersion": "serving.kserve.io/v1alpha1",
+    "kind": "LLMInferenceService",
+    "metadata": { "name": "granite-rag", "namespace": "rag" },
+    "spec": {
+      "replicas": 2,
+      "model": { "uri": "hf://ibm-granite/granite-3.1-8b-instruct", "name": "granite-3.1-8b" },
+      "template": {
+        "containers": [
+          { "name": "main", "image": "ghcr.io/llm-d/llm-d:0.2", "resources": { "limits": { "nvidia.com/gpu": 1 } } }
+        ]
+      }
+    },
+    "status": { "url": "http://granite-rag.rag.svc", "conditions": [{ "type": "Ready", "status": "False", "reason": "Progressing" }] }
+  }
+]

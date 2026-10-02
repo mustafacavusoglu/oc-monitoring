@@ -1,6 +1,7 @@
 package dashboard
 
 import (
+	"compress/gzip"
 	"context"
 	"encoding/json"
 	"net/http"
@@ -9,61 +10,101 @@ import (
 	"time"
 
 	"monitor/internal/cluster"
+	"monitor/internal/config"
 	"monitor/internal/model"
 	"monitor/internal/projects"
 
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+	"k8s.io/apimachinery/pkg/runtime/schema"
 )
 
-func TestDashboardEndpointReturnsSampleSnapshotAndRegistryHealth(t *testing.T) {
-	lastSuccess := time.Date(2026, 9, 27, 12, 0, 0, 0, time.UTC)
-	checkedAt := lastSuccess.Add(time.Minute)
-	cron := &unstructured.Unstructured{Object: map[string]any{
-		"metadata": map[string]any{"name": "daily-job", "namespace": "payments"},
-		"spec": map[string]any{
-			"schedule": "0 12 * * *",
-			"workflowSpec": map[string]any{"templates": []any{
-				map[string]any{"name": "run", "container": map[string]any{"image": "registry.example.test/payments/team/app:v1"}},
-			}},
-		},
+var resources = config.Resources{
+	CronWorkflows:        schema.GroupVersionResource{Group: "argoproj.io", Version: "v1alpha1", Resource: "cronworkflows"},
+	Workflows:            schema.GroupVersionResource{Group: "argoproj.io", Version: "v1alpha1", Resource: "workflows"},
+	InferenceServices:    schema.GroupVersionResource{Group: "serving.kserve.io", Version: "v1beta1", Resource: "inferenceservices"},
+	ServingRuntimes:      schema.GroupVersionResource{Group: "serving.kserve.io", Version: "v1alpha1", Resource: "servingruntimes"},
+	LLMInferenceServices: schema.GroupVersionResource{Group: "serving.kserve.io", Version: "v1alpha1", Resource: "llminferenceservices"},
+}
+
+type fakeImages struct{ t *testing.T }
+
+func (fakeImages) ManifestURL(namespace, imageID string) string {
+	return "https://nexus.example.test/bch-" + namespace + "/manifests/" + imageID
+}
+
+func (f fakeImages) Lookup(_ context.Context, urls []string) map[string]model.ImageResult {
+	want := "https://nexus.example.test/bch-payments/manifests/v1"
+	if len(urls) != 1 || urls[0] != want {
+		f.t.Fatalf("image URLs = %v, want [%s]", urls, want)
+	}
+	checkedAt := time.Date(2026, 9, 27, 12, 1, 0, 0, time.UTC)
+	return map[string]model.ImageResult{want: {URL: want, Status: model.ImageExist, CheckedAt: &checkedAt}}
+}
+
+func object(apiVersion, kind, namespace, name string, spec map[string]any) *unstructured.Unstructured {
+	return &unstructured.Unstructured{Object: map[string]any{
+		"apiVersion": apiVersion, "kind": kind,
+		"metadata": map[string]any{"name": name, "namespace": namespace},
+		"spec":     spec,
 	}}
-	other := cron.DeepCopy()
-	other.SetNamespace("platform-tools")
-	other.Object["spec"].(map[string]any)["workflowSpec"].(map[string]any)["templates"] = []any{
-		map[string]any{"name": "run", "container": map[string]any{"image": "registry.example.test/platform-tools/app:v2"}},
-	}
-	api := newHandler(
-		func() projects.Snapshot {
-			return projects.Snapshot{
-				Namespaces:  []string{"payments"},
-				LastSuccess: &lastSuccess,
-			}
+}
+
+func TestDashboardEndpointCombinesBatchAndModels(t *testing.T) {
+	cron := object("argoproj.io/v1alpha1", "CronWorkflow", "payments", "daily-job", map[string]any{
+		"schedule": "0 12 * * *",
+		"workflowSpec": map[string]any{"templates": []any{
+			map[string]any{"name": "run", "container": map[string]any{"image": "registry.example.test/payments/app:v1"}},
+		}},
+	})
+	runtime := object("serving.kserve.io/v1alpha1", "ServingRuntime", "chatbot", "vllm", map[string]any{
+		"containers": []any{map[string]any{"image": "quay.io/vllm/vllm-openai:0.6"}},
+	})
+	isvc := object("serving.kserve.io/v1beta1", "InferenceService", "chatbot", "llama", map[string]any{
+		"predictor": map[string]any{"model": map[string]any{"runtime": "vllm"}},
+	})
+	api := NewHandler(Sources{
+		Projects: func() projects.Snapshot { return projects.Snapshot{Namespaces: []string{"payments"}} },
+		Batch: func() cluster.Snapshot {
+			return cluster.Snapshot{Objects: map[schema.GroupVersionResource][]*unstructured.Unstructured{resources.CronWorkflows: {cron}}, Health: model.SourceHealth{State: model.StateReady}}
 		},
-		func() cluster.Snapshot {
-			return cluster.Snapshot{CronWorkflows: []*unstructured.Unstructured{cron, other}, Health: model.SourceHealth{State: "ready"}}
+		Models: func() cluster.Snapshot {
+			return cluster.Snapshot{Objects: map[schema.GroupVersionResource][]*unstructured.Unstructured{
+				resources.ServingRuntimes: {runtime}, resources.InferenceServices: {isvc},
+			}, Health: model.SourceHealth{State: model.StateReady}}
 		},
-		func(_ context.Context, refs []string) map[string]model.ImageResult {
-			if len(refs) != 1 || refs[0] != "bch-payments/manifests/v1" {
-				t.Fatalf("image refs = %v", refs)
-			}
-			return map[string]model.ImageResult{
-				refs[0]: {Reference: refs[0], URL: "https://nexus.example.test/repository/mlops/bch-payments/manifests/v1", Status: "exist", CheckedAt: &checkedAt},
-			}
-		},
-	)
+		Images: fakeImages{t},
+	}, config.Config{
+		Resources:         resources,
+		Serving:           config.ServingRules{LLMImageKeywords: []string{"vllm"}, MLImageKeywords: []string{"triton"}},
+		UIRefreshInterval: 30 * time.Second,
+	})
+
+	req := httptest.NewRequest(http.MethodGet, "/api/dashboard", nil)
+	req.Header.Set("Accept-Encoding", "gzip")
 	recorder := httptest.NewRecorder()
-	api.ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/api/dashboard", nil))
-	if recorder.Code != http.StatusOK {
-		t.Fatalf("HTTP status = %d, want 200: %s", recorder.Code, recorder.Body.String())
+	api.ServeHTTP(recorder, req)
+	if recorder.Code != http.StatusOK || recorder.Header().Get("Content-Encoding") != "gzip" {
+		t.Fatalf("HTTP %d encoding=%q: %s", recorder.Code, recorder.Header().Get("Content-Encoding"), recorder.Body.String())
 	}
-	var response model.DashboardResponse
-	if err := json.Unmarshal(recorder.Body.Bytes(), &response); err != nil {
+	body, err := gzip.NewReader(recorder.Body)
+	if err != nil {
 		t.Fatal(err)
 	}
-	if len(response.CronWorkflows) != 1 || response.CronWorkflows[0].Name != "daily-job" {
-		t.Fatalf("dashboard workflows = %#v", response.CronWorkflows)
+	var response model.DashboardResponse
+	if err := json.NewDecoder(body).Decode(&response); err != nil {
+		t.Fatal(err)
 	}
-	if len(response.CronWorkflows[0].Images) != 1 || response.CronWorkflows[0].Images[0].ImageID != "v1" || response.CronWorkflows[0].Images[0].URL != "https://nexus.example.test/repository/mlops/bch-payments/manifests/v1" || response.CronWorkflows[0].Images[0].Status != "exist" || response.RegistrySource.State != "ready" {
-		t.Fatalf("image/source = %#v/%q", response.CronWorkflows[0].Images, response.RegistrySource.State)
+
+	if response.RefreshIntervalSeconds != 30 {
+		t.Fatalf("refresh interval = %d, want 30", response.RefreshIntervalSeconds)
+	}
+	if len(response.CronWorkflows) != 1 || response.CronWorkflows[0].Images[0].Status != model.ImageExist || response.Sources.Registry.State != model.StateReady {
+		t.Fatalf("cron workflows = %#v, registry = %#v", response.CronWorkflows, response.Sources.Registry)
+	}
+	if len(response.Models) != 1 || response.Models[0].Type != model.TypeLLM || response.Models[0].Name != "llama" {
+		t.Fatalf("models = %#v", response.Models)
+	}
+	if want := []string{"chatbot", "payments"}; len(response.Namespaces) != 2 || response.Namespaces[0] != want[0] || response.Namespaces[1] != want[1] {
+		t.Fatalf("namespaces = %v, want %v", response.Namespaces, want)
 	}
 }

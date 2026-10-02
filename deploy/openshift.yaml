@@ -1,35 +1,53 @@
-apiVersion: v1
-kind: Namespace
-metadata:
-  name: workflow-monitoring
----
+# Deploy into the existing mlops-development project:
+#   oc apply -f deploy/openshift.yaml
+# Every environment-specific value lives in the ConfigMap below; the binary has
+# no built-in defaults and refuses to start if a key is missing.
 apiVersion: v1
 kind: ConfigMap
 metadata:
-  name: cronworkflow-dashboard-config
-  namespace: workflow-monitoring
+  name: mlops-dashboard-config
+  namespace: mlops-development
 data:
   HTTP_ADDR: ":8080"
   WEB_DIR: /app/web
+  UI_REFRESH_INTERVAL: 30s
+  UPSTREAM_TIMEOUT: 10s
+
+  # Batch projects: namespaces come from the project JSON in Azure Repos.
   AZURE_REPO_URL: https://dev.azure.com/ORG/PROJECT/_git/REPOSITORY
   AZURE_REPO_BRANCH: main
   AZURE_PROJECTS_PATH: /path/to/project.json
+  BATCH_SERVING_KEYWORD: bch
   PROJECT_REFRESH_INTERVAL: 5m
+
+  # Batch image checks against Nexus. {namespace} and {imageId} are filled per image.
+  NEXUS_MANIFEST_URL_TEMPLATE: https://repomaster.company.com/repository/company-private/v2/mlops/bch-{namespace}/manifests/{imageId}
   IMAGE_CACHE_TTL: 24h
   REGISTRY_CHECK_CONCURRENCY: "4"
-  NEXUS_URL: https://repomaster.company.com/repository/company-private/v2/mlops/
+
+  # Online models: InferenceServices are classified by their ServingRuntime image.
+  LLM_RUNTIME_IMAGE_KEYWORDS: vllm
+  ML_RUNTIME_IMAGE_KEYWORDS: triton
+  GPU_RESOURCE_NAME: nvidia.com/gpu
+
+  # Watched APIs (group/version/resource), adjustable per cluster version.
+  CRONWORKFLOW_RESOURCE: argoproj.io/v1alpha1/cronworkflows
+  WORKFLOW_RESOURCE: argoproj.io/v1alpha1/workflows
+  INFERENCE_SERVICE_RESOURCE: serving.kserve.io/v1beta1/inferenceservices
+  SERVING_RUNTIME_RESOURCE: serving.kserve.io/v1alpha1/servingruntimes
+  LLM_INFERENCE_SERVICE_RESOURCE: serving.kserve.io/v1alpha1/llminferenceservices
 ---
 apiVersion: v1
 kind: ServiceAccount
 metadata:
-  name: cronworkflow-dashboard
-  namespace: workflow-monitoring
+  name: mlops-dashboard
+  namespace: mlops-development
 automountServiceAccountToken: true
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole
 metadata:
-  name: cronworkflow-dashboard-reader
+  name: mlops-dashboard-reader
 rules:
   - apiGroups:
       - argoproj.io
@@ -48,51 +66,61 @@ rules:
       - get
       - list
       - watch
+  - apiGroups:
+      - serving.kserve.io
+    resources:
+      - inferenceservices
+      - servingruntimes
+      - llminferenceservices
+    verbs:
+      - get
+      - list
+      - watch
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRoleBinding
 metadata:
-  name: cronworkflow-dashboard-reader
+  name: mlops-dashboard-reader
 subjects:
   - kind: ServiceAccount
-    name: cronworkflow-dashboard
-    namespace: workflow-monitoring
+    name: mlops-dashboard
+    namespace: mlops-development
 roleRef:
   apiGroup: rbac.authorization.k8s.io
   kind: ClusterRole
-  name: cronworkflow-dashboard-reader
+  name: mlops-dashboard-reader
 ---
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: cronworkflow-dashboard
-  namespace: workflow-monitoring
+  name: mlops-dashboard
+  namespace: mlops-development
   labels:
-    app.kubernetes.io/name: cronworkflow-dashboard
+    app.kubernetes.io/name: mlops-dashboard
 spec:
   replicas: 1
   selector:
     matchLabels:
-      app.kubernetes.io/name: cronworkflow-dashboard
+      app.kubernetes.io/name: mlops-dashboard
   template:
     metadata:
       labels:
-        app.kubernetes.io/name: cronworkflow-dashboard
+        app.kubernetes.io/name: mlops-dashboard
     spec:
-      serviceAccountName: cronworkflow-dashboard
+      serviceAccountName: mlops-dashboard
       automountServiceAccountToken: true
       securityContext:
         seccompProfile:
           type: RuntimeDefault
       containers:
         - name: dashboard
-          image: mustafa12/monitor:0.0.20
+          image: mustafa12/monitor:0.0.21
           imagePullPolicy: IfNotPresent
           envFrom:
             - configMapRef:
-                name: cronworkflow-dashboard-config
+                name: mlops-dashboard-config
             - secretRef:
-                name: cronworkflow-dashboard-secrets
+                name: mlops-dashboard-secrets
                 optional: true
           ports:
             - name: http
@@ -133,11 +161,11 @@ spec:
 apiVersion: v1
 kind: Service
 metadata:
-  name: cronworkflow-dashboard
-  namespace: workflow-monitoring
+  name: mlops-dashboard
+  namespace: mlops-development
 spec:
   selector:
-    app.kubernetes.io/name: cronworkflow-dashboard
+    app.kubernetes.io/name: mlops-dashboard
   ports:
     - name: http
       port: 8080
@@ -147,12 +175,12 @@ spec:
 apiVersion: route.openshift.io/v1
 kind: Route
 metadata:
-  name: cronworkflow-dashboard
-  namespace: workflow-monitoring
+  name: mlops-dashboard
+  namespace: mlops-development
 spec:
   to:
     kind: Service
-    name: cronworkflow-dashboard
+    name: mlops-dashboard
   port:
     targetPort: http
   tls:

@@ -21,201 +21,191 @@ import (
 	"k8s.io/client-go/tools/cache"
 )
 
-var watchedResources = []schema.GroupVersionResource{
-	{Group: "argoproj.io", Version: "v1alpha1", Resource: "cronworkflows"},
-	{Group: "argoproj.io", Version: "v1alpha1", Resource: "workflows"},
-	{Version: "v1", Resource: "pods"},
-}
+const (
+	reconcileInterval = 2 * time.Second
+	statusLogInterval = 30 * time.Second
+	lastAppliedAnno   = "kubectl.kubernetes.io/last-applied-configuration"
+)
 
+// AllNamespaces makes a Watcher list/watch its resources cluster-wide with one
+// informer per resource.
+func AllNamespaces() []string { return []string{metav1.NamespaceAll} }
+
+// Snapshot exposes objects straight from the informer caches. They are shared
+// with the informers and must be treated as read-only.
 type Snapshot struct {
-	CronWorkflows []*unstructured.Unstructured
-	Workflows     []*unstructured.Unstructured
-	Pods          []*unstructured.Unstructured
-	Health        model.SourceHealth
+	Objects map[schema.GroupVersionResource][]*unstructured.Unstructured
+	Health  model.SourceHealth
 }
 
 type namespaceWatch struct {
-	ctx            context.Context
-	cancel         context.CancelFunc
-	informers      []cache.SharedIndexInformer
-	errors         map[string]string
-	syncedResource map[string]bool
+	done      <-chan struct{}
+	cancel    context.CancelFunc
+	informers map[schema.GroupVersionResource]cache.SharedIndexInformer
+	errors    map[schema.GroupVersionResource]string
+	logged    map[schema.GroupVersionResource]bool
 }
 
+// Watcher keeps informer caches for a fixed set of resources across a
+// namespace set that may change over time.
 type Watcher struct {
+	name       string
 	client     dynamic.Interface
+	resources  []schema.GroupVersionResource
 	namespaces func() []string
 
-	mu          sync.RWMutex
-	watches     map[string]*namespaceWatch
-	lastSuccess *time.Time
-	wasReady    bool
-	lastStatus  time.Time
+	mu            sync.RWMutex
+	watches       map[string]*namespaceWatch
+	lastSuccess   *time.Time
+	wasReady      bool
+	lastStatusLog time.Time
 }
 
-func NewWatcher(cfg *rest.Config, namespaces func() []string) (*Watcher, error) {
-	if cfg == nil {
-		var err error
-		cfg, err = rest.InClusterConfig()
-		if err != nil {
-			return nil, fmt.Errorf("load in-cluster Kubernetes config: %w", err)
-		}
+func NewClient() (dynamic.Interface, error) {
+	cfg, err := rest.InClusterConfig()
+	if err != nil {
+		return nil, fmt.Errorf("load in-cluster Kubernetes config: %w", err)
 	}
 	client, err := dynamic.NewForConfig(cfg)
 	if err != nil {
 		return nil, fmt.Errorf("create Kubernetes dynamic client: %w", err)
 	}
-	if namespaces == nil {
-		namespaces = func() []string { return nil }
-	}
-	return &Watcher{client: client, namespaces: namespaces, watches: make(map[string]*namespaceWatch)}, nil
+	return client, nil
+}
+
+func NewWatcher(name string, client dynamic.Interface, resources []schema.GroupVersionResource, namespaces func() []string) *Watcher {
+	return &Watcher{name: name, client: client, resources: resources, namespaces: namespaces, watches: make(map[string]*namespaceWatch)}
 }
 
 func (w *Watcher) Run(ctx context.Context) {
-	log.Printf("cluster watcher starting")
-	w.reconcile(ctx)
-	ticker := time.NewTicker(2 *time.Second)
+	log.Printf("%s watcher starting: resources=%v", w.name, w.resources)
+	ticker := time.NewTicker(reconcileInterval)
 	defer ticker.Stop()
 	for {
+		w.reconcile(ctx)
 		select {
 		case <-ctx.Done():
 			w.stopAll()
 			return
 		case <-ticker.C:
-			w.reconcile(ctx)
 		}
 	}
 }
 
 func (w *Watcher) reconcile(ctx context.Context) {
-	desired := normalizedNamespaces(w.namespaces())
-	desiredSet := make(map[string]struct{}, len(desired))
-	for _, namespace := range desired {
-		desiredSet[namespace] = struct{}{}
+	desired := make(map[string]struct{})
+	for _, namespace := range w.namespaces() {
+		desired[namespace] = struct{}{}
 	}
 
-	var startWatches []*namespaceWatch
-	watchSetChanged := false
+	var started []*namespaceWatch
+	changed := false
 	w.mu.Lock()
 	for namespace, watch := range w.watches {
-		if _, found := desiredSet[namespace]; !found {
-			log.Printf("cluster watch stopping: namespace=%q", namespace)
+		if _, keep := desired[namespace]; !keep {
+			log.Printf("%s watch stopping: namespace=%q", w.name, namespace)
 			watch.cancel()
 			delete(w.watches, namespace)
-			watchSetChanged = true
+			changed = true
 		}
 	}
-	for _, namespace := range desired {
+	for namespace := range desired {
 		if _, found := w.watches[namespace]; !found {
 			watch := w.newNamespaceWatch(ctx, namespace)
 			w.watches[namespace] = watch
-			startWatches = append(startWatches, watch)
-			watchSetChanged = true
+			started = append(started, watch)
+			changed = true
 		}
 	}
-	allSynced := true
-	var watchErrors []string
-	for namespace, watch := range w.watches {
-		for i, informer := range watch.informers {
-			if !informer.HasSynced() {
-				allSynced = false
-				continue
-			}
-			resource := watchedResources[i].Resource
-			if !watch.syncedResource[resource] {
-				watch.syncedResource[resource] = true
-				log.Printf("cluster informer synced: namespace=%q resource=%q objects=%d", namespace, resource, len(informer.GetStore().List()))
-			}
-		}
-		for resource, watchError := range watch.errors {
-			watchErrors = append(watchErrors, namespace+"/"+resource+": "+watchError)
-		}
+	w.logSyncedInformers()
+	synced, errs := w.status()
+	if time.Since(w.lastStatusLog) >= statusLogInterval {
+		log.Printf("%s watcher status: namespaces=%d objects=%v synced=%v errors=%q", w.name, len(w.watches), w.objectCounts(), synced, errs)
+		w.lastStatusLog = time.Now()
 	}
-	sort.Strings(watchErrors)
-	if time.Since(w.lastStatus) >= 30*time.Second || w.lastStatus.IsZero() {
-		counts := map[string]int{"cronworkflows": 0, "workflows": 0, "pods": 0}
-		synced := 0
-		for _, watch := range w.watches {
-			for i, informer := range watch.informers {
-				resource := watchedResources[i].Resource
-				counts[resource] += len(informer.GetStore().List())
-				if informer.HasSynced() {
-					synced++
-				}
-			}
-		}
-		log.Printf("cluster watcher status: namespaces=%d informers_synced=%d/%d cronworkflows=%d workflows=%d pods=%d errors=%q", len(w.watches), synced, len(w.watches)*len(watchedResources), counts["cronworkflows"], counts["workflows"], counts["pods"], watchErrors)
-		w.lastStatus = time.Now()
-	}
-	ready := allSynced && len(watchErrors) == 0
-	if ready && (!w.wasReady || w.lastSuccess == nil || watchSetChanged) {
+	ready := synced && len(errs) == 0
+	if ready && (!w.wasReady || w.lastSuccess == nil || changed) {
 		now := time.Now().UTC()
 		w.lastSuccess = &now
 	}
 	w.wasReady = ready
 	w.mu.Unlock()
-	for _, watch := range startWatches {
+
+	for _, watch := range started {
 		for _, informer := range watch.informers {
-			go informer.Run(watch.ctx.Done())
+			go informer.Run(watch.done)
 		}
 	}
 }
 
 func (w *Watcher) newNamespaceWatch(parent context.Context, namespace string) *namespaceWatch {
 	ctx, cancel := context.WithCancel(parent)
-	watch := &namespaceWatch{ctx: ctx, cancel: cancel, errors: make(map[string]string), syncedResource: make(map[string]bool)}
-	for _, resource := range watchedResources {
-		log.Printf("cluster watch starting: namespace=%q resource=%q", namespace, resource.Resource)
-		namespacedResource := w.client.Resource(resource).Namespace(namespace)
-		listWatch := &cache.ListWatch{
-			ListFunc: func(options metav1.ListOptions) (runtime.Object, error) {
-				return namespacedResource.List(ctx, options)
-			},
-			WatchFunc: func(options metav1.ListOptions) (k8swatch.Interface, error) {
-				return namespacedResource.Watch(ctx, options)
-			},
-		}
+	watch := &namespaceWatch{
+		done:      ctx.Done(),
+		cancel:    cancel,
+		informers: make(map[schema.GroupVersionResource]cache.SharedIndexInformer, len(w.resources)),
+		errors:    make(map[schema.GroupVersionResource]string),
+		logged:    make(map[schema.GroupVersionResource]bool),
+	}
+	for _, gvr := range w.resources {
+		log.Printf("%s watch starting: namespace=%q resource=%q", w.name, namespace, gvr.String())
+		client := w.client.Resource(gvr).Namespace(namespace)
 		informer := cache.NewSharedIndexInformer(
-			listWatch,
+			&cache.ListWatch{
+				ListFunc: func(options metav1.ListOptions) (runtime.Object, error) {
+					return client.List(ctx, options)
+				},
+				WatchFunc: func(options metav1.ListOptions) (k8swatch.Interface, error) {
+					return client.Watch(ctx, options)
+				},
+			},
 			&unstructured.Unstructured{},
 			0,
-			cache.Indexers{cache.NamespaceIndex: cache.MetaNamespaceIndexFunc},
+			cache.Indexers{},
 		)
+		// Dropping bulky metadata keeps the cache small; the dashboard never reads it.
+		_ = informer.SetTransform(trimMetadata)
 		_ = informer.SetWatchErrorHandler(func(_ *cache.Reflector, err error) {
-			w.setWatchError(namespace, watch, resource.Resource, err)
+			w.setWatchError(namespace, watch, gvr, err.Error())
 		})
+		clear := func() { w.setWatchError(namespace, watch, gvr, "") }
 		_, _ = informer.AddEventHandler(cache.ResourceEventHandlerFuncs{
-			AddFunc: func(any) { w.clearWatchError(namespace, watch, resource.Resource) },
-			UpdateFunc: func(any, any) {
-				w.clearWatchError(namespace, watch, resource.Resource)
-			},
-			DeleteFunc: func(any) { w.clearWatchError(namespace, watch, resource.Resource) },
+			AddFunc:    func(any) { clear() },
+			UpdateFunc: func(any, any) { clear() },
+			DeleteFunc: func(any) { clear() },
 		})
-		watch.informers = append(watch.informers, informer)
+		watch.informers[gvr] = informer
 	}
 	return watch
 }
 
-func (w *Watcher) setWatchError(namespace string, target *namespaceWatch, resource string, err error) {
-	w.mu.Lock()
-	defer w.mu.Unlock()
-	if watch := w.watches[namespace]; watch == target {
-		message := err.Error()
-		if watch.errors[resource] != message {
-			log.Printf("cluster watch error: namespace=%q resource=%q error=%q", namespace, resource, message)
+func trimMetadata(obj any) (any, error) {
+	if object, ok := obj.(*unstructured.Unstructured); ok {
+		object.SetManagedFields(nil)
+		if annotations := object.GetAnnotations(); annotations[lastAppliedAnno] != "" {
+			delete(annotations, lastAppliedAnno)
+			object.SetAnnotations(annotations)
 		}
-		watch.errors[resource] = message
 	}
+	return obj, nil
 }
 
-func (w *Watcher) clearWatchError(namespace string, target *namespaceWatch, resource string) {
+// setWatchError records (or clears, when message is empty) a watch error for
+// the namespace watch that is still current.
+func (w *Watcher) setWatchError(namespace string, target *namespaceWatch, gvr schema.GroupVersionResource, message string) {
 	w.mu.Lock()
 	defer w.mu.Unlock()
-	if watch := w.watches[namespace]; watch == target {
-		if _, found := watch.errors[resource]; found {
-			log.Printf("cluster watch recovered: namespace=%q resource=%q", namespace, resource)
-			delete(watch.errors, resource)
-		}
+	if w.watches[namespace] != target {
+		return
+	}
+	previous, found := target.errors[gvr]
+	switch {
+	case message == "" && found:
+		log.Printf("%s watch recovered: namespace=%q resource=%q", w.name, namespace, gvr.Resource)
+		delete(target.errors, gvr)
+	case message != "" && previous != message:
+		log.Printf("%s watch error: namespace=%q resource=%q error=%q", w.name, namespace, gvr.Resource, message)
+		target.errors[gvr] = message
 	}
 }
 
@@ -231,80 +221,74 @@ func (w *Watcher) stopAll() {
 func (w *Watcher) Snapshot() Snapshot {
 	w.mu.RLock()
 	defer w.mu.RUnlock()
-
-	snapshot := Snapshot{}
-	allSynced := true
-	var watchErrors []string
-	namespaces := make([]string, 0, len(w.watches))
-	for namespace := range w.watches {
-		namespaces = append(namespaces, namespace)
-	}
-	sort.Strings(namespaces)
-
-	for _, namespace := range namespaces {
-		watch := w.watches[namespace]
-		for i, informer := range watch.informers {
-			if !informer.HasSynced() {
-				allSynced = false
-			}
+	objects := make(map[schema.GroupVersionResource][]*unstructured.Unstructured, len(w.resources))
+	for _, watch := range w.watches {
+		for gvr, informer := range watch.informers {
 			for _, item := range informer.GetStore().List() {
-				resource, ok := item.(*unstructured.Unstructured)
-				if !ok {
-					continue
-				}
-				copy := resource.DeepCopy()
-				switch watchedResources[i].Resource {
-				case "cronworkflows":
-					snapshot.CronWorkflows = append(snapshot.CronWorkflows, copy)
-				case "workflows":
-					snapshot.Workflows = append(snapshot.Workflows, copy)
-				case "pods":
-					snapshot.Pods = append(snapshot.Pods, copy)
+				if object, ok := item.(*unstructured.Unstructured); ok {
+					objects[gvr] = append(objects[gvr], object)
 				}
 			}
 		}
-		for resource, watchError := range watch.errors {
-			watchErrors = append(watchErrors, namespace+"/"+resource+": "+watchError)
-		}
 	}
 
-	sort.Strings(watchErrors)
-	state := "ready"
-	errorText := ""
-	if len(watchErrors) != 0 {
-		state = "degraded"
-		errorText = strings.Join(watchErrors, "; ")
-	} else if !allSynced {
-		state = "syncing"
-		errorText = "waiting for informer cache sync"
-	}
+	health := model.SourceHealth{State: model.StateReady}
 	if w.lastSuccess != nil {
 		lastSuccess := *w.lastSuccess
-		snapshot.Health.LastSuccess = &lastSuccess
+		health.LastSuccess = &lastSuccess
 	}
-	if len(w.watches) == 0 && allSynced {
-		snapshot.Health.State = "ready"
-	} else {
-		snapshot.Health.State = state
+	synced, errs := w.status()
+	switch {
+	case len(errs) > 0:
+		health.State, health.Error = model.StateDegraded, strings.Join(errs, "; ")
+	case !synced:
+		health.State, health.Error = model.StateSyncing, "waiting for informer cache sync"
 	}
-	snapshot.Health.Error = errorText
-	return snapshot
+	return Snapshot{Objects: objects, Health: health}
 }
 
-func normalizedNamespaces(namespaces []string) []string {
-	seen := make(map[string]struct{}, len(namespaces))
-	result := make([]string, 0, len(namespaces))
-	for _, namespace := range namespaces {
-		namespace = strings.TrimSpace(namespace)
-		if namespace == "" {
-			continue
+// status must be called with w.mu held.
+func (w *Watcher) status() (bool, []string) {
+	synced := true
+	var errs []string
+	for namespace, watch := range w.watches {
+		for gvr, informer := range watch.informers {
+			synced = synced && informer.HasSynced()
+			if message := watch.errors[gvr]; message != "" {
+				errs = append(errs, fmt.Sprintf("%s/%s: %s", displayNamespace(namespace), gvr.Resource, message))
+			}
 		}
-		if _, found := seen[namespace]; found {
-			continue
-		}
-		seen[namespace] = struct{}{}
-		result = append(result, namespace)
 	}
-	sort.Strings(result)
-	return result
+	sort.Strings(errs)
+	return synced, errs
+}
+
+// logSyncedInformers must be called with w.mu held for writing.
+func (w *Watcher) logSyncedInformers() {
+	for namespace, watch := range w.watches {
+		for gvr, informer := range watch.informers {
+			if informer.HasSynced() && !watch.logged[gvr] {
+				watch.logged[gvr] = true
+				log.Printf("%s informer synced: namespace=%q resource=%q objects=%d", w.name, displayNamespace(namespace), gvr.Resource, len(informer.GetStore().ListKeys()))
+			}
+		}
+	}
+}
+
+// objectCounts must be called with w.mu held.
+func (w *Watcher) objectCounts() map[string]int {
+	counts := make(map[string]int, len(w.resources))
+	for _, watch := range w.watches {
+		for gvr, informer := range watch.informers {
+			counts[gvr.Resource] += len(informer.GetStore().ListKeys())
+		}
+	}
+	return counts
+}
+
+func displayNamespace(namespace string) string {
+	if namespace == metav1.NamespaceAll {
+		return "*"
+	}
+	return namespace
 }
