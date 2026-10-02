@@ -78,23 +78,25 @@ type CronWorkflow struct {
 // Model is an online-serving deployment: a KServe InferenceService classified
 // by its ServingRuntime image, or an LLMInferenceService.
 type Model struct {
-	Namespace   string     `json:"namespace"`
-	Name        string     `json:"name"`
-	Kind        string     `json:"kind"`
-	Type        string     `json:"type"`
-	Runtime     string     `json:"runtime,omitempty"`
-	Image       string     `json:"image,omitempty"`
-	ModelFormat string     `json:"modelFormat,omitempty"`
-	StorageURI  string     `json:"storageUri,omitempty"`
-	URL         string     `json:"url,omitempty"`
-	State       string     `json:"state"`
-	Reason      string     `json:"reason,omitempty"`
-	Message     string     `json:"message,omitempty"`
-	MinReplicas *int64     `json:"minReplicas,omitempty"`
-	MaxReplicas *int64     `json:"maxReplicas,omitempty"`
-	GPU         int64      `json:"gpu"`
-	CreatedAt   *time.Time `json:"createdAt,omitempty"`
-	StateSince  *time.Time `json:"stateSince,omitempty"`
+	Namespace   string `json:"namespace"`
+	Name        string `json:"name"`
+	Kind        string `json:"kind"`
+	Type        string `json:"type"`
+	Runtime     string `json:"runtime,omitempty"`
+	Image       string `json:"image,omitempty"`
+	ModelFormat string `json:"modelFormat,omitempty"`
+	StorageURI  string `json:"storageUri,omitempty"`
+	URL         string `json:"url,omitempty"`
+	State       string `json:"state"`
+	Reason      string `json:"reason,omitempty"`
+	Message     string `json:"message,omitempty"`
+	MinReplicas *int64 `json:"minReplicas,omitempty"`
+	MaxReplicas *int64 `json:"maxReplicas,omitempty"`
+	GPU         int64  `json:"gpu"`
+	// MIG holds MIG slices per profile (e.g. "1g.5gb": 2), per replica.
+	MIG        map[string]int64 `json:"mig,omitempty"`
+	CreatedAt  *time.Time       `json:"createdAt,omitempty"`
+	StateSince *time.Time       `json:"stateSince,omitempty"`
 }
 
 type SourceHealth struct {

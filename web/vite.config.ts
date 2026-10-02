@@ -16,5 +16,8 @@ const demoApi = (): Plugin => ({
 
 export default defineConfig({
   plugins: [react(), demoApi()],
-  server: { port: 5173 },
+  server: {
+    port: 5173,
+    allowedHosts: true,
+  },
 })

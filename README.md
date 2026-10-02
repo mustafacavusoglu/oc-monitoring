@@ -35,6 +35,7 @@ Ortama özgü bütün değerler `deploy/openshift.yaml` içindeki `mlops-dashboa
 | `IMAGE_CACHE_TTL`, `REGISTRY_CHECK_CONCURRENCY` | Nexus sonuç cache süresi ve aynı anda yapılabilecek kontrol sayısı. |
 | `LLM_RUNTIME_IMAGE_KEYWORDS`, `ML_RUNTIME_IMAGE_KEYWORDS` | Virgülle ayrılmış ServingRuntime image anahtar kelimeleri. |
 | `GPU_RESOURCE_NAME` | GPU kaynak adı (ör. `nvidia.com/gpu`). |
+| `MIG_RESOURCE_PREFIX` | MIG dilimi kaynak öneki (ör. `nvidia.com/mig-`); kalan kısım profil adıdır (`1g.5gb`, `3g.20gb`). |
 | `CRONWORKFLOW_RESOURCE`, `WORKFLOW_RESOURCE`, `INFERENCE_SERVICE_RESOURCE`, `SERVING_RUNTIME_RESOURCE`, `LLM_INFERENCE_SERVICE_RESOURCE` | İzlenen API’ler, `group/version/resource` biçiminde. Cluster’daki CRD sürümü farklıysa buradan değiştirilir. |
 
 Azure Repos anonim okumaya açık değilse PAT’i Secret olarak ekleyin; Secret’taki `AZURE_TOKEN` loglanmaz:
@@ -69,7 +70,7 @@ cd web && npm ci && npm run dev    # http://localhost:5173
 # Testler ve build
 go test ./... -count=1
 npm run build --prefix web
-docker build -t mustafa12/monitor:0.0.21 .
+docker build -t mustafa12/monitor:0.0.22 .
 ```
 
 `npm run dev`, Vite dev sunucusunda `/api/dashboard` isteğini `web/src/mock/demo.ts` içindeki deterministik dummy veriyle yanıtlar. Bu dosya yalnızca dev sunucusunda yüklenir, production bundle’a girmez.
@@ -114,7 +115,7 @@ Uygulama kullanıcı girişi sunmaz. Route’u yalnızca iç ağdan erişilebili
 ## Durum kuralları
 
 - Model durumu kaynağın `Ready` condition’ından gelir: `True` → Hazır, `False` → Hazır değil (reason/message gösterilir), condition yoksa Bilinmiyor.
-- Ayrılan GPU = replika başına GPU limiti (yoksa request) × `minReplicas` (belirtilmemişse 1).
+- Ayrılan GPU = replika başına GPU limiti (yoksa request) × `minReplicas` (belirtilmemişse 1). MIG dilimleri aynı şekilde profil bazında sayılır ve tam GPU’dan ayrı gösterilir; MIG “single” stratejisinde dilimler `nvidia.com/gpu` olarak göründüğü için tam GPU gibi sayılır.
 - CronWorkflow’un son çalışması `workflows.argoproj.io/scheduled-time` annotation’ına, yoksa creation time’a göre seçilir. Çalışma geçmişi Argo’nun sakladığı Workflow’lardan oluşur (en fazla son 10 gösterilir).
 - Pod’lar `workflows.argoproj.io/workflow` etiketiyle Workflow’a bağlanır.
 - Sonraki çalışma CronWorkflow timezone’uyla hesaplanır; timezone yoksa UTC varsayılır ve uyarı gösterilir.

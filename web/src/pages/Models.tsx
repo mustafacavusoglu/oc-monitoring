@@ -8,7 +8,7 @@ import { StatusBadge } from '../components/StatusBadge'
 import { StackedBars } from '../components/charts/StackedBars'
 import { HEALTH_SERIES, TYPE_SERIES, groupRows } from '../lib/chart'
 import { formatDateTime, formatRelative, matchesQuery } from '../lib/format'
-import { allocatedGpu, modelTone } from '../lib/status'
+import { acceleratorLabel, allocatedGpu, allocatedMig, modelTone, usesAccelerator } from '../lib/status'
 import type { Model, ModelType } from '../types'
 
 type Filter = 'all' | 'Ready' | 'NotReady' | 'gpu'
@@ -19,7 +19,7 @@ const FILTERS: Record<Filter, (model: Model) => boolean> = {
   all: () => true,
   Ready: (model) => model.state === 'Ready',
   NotReady: (model) => model.state !== 'Ready',
-  gpu: (model) => model.gpu > 0,
+  gpu: usesAccelerator,
 }
 
 const replicas = (model: Model) =>
@@ -35,7 +35,7 @@ const columns: Column<Model>[] = [
   { key: 'runtime', header: 'Runtime', render: (m) => m.runtime || m.kind, sortValue: (m) => m.runtime || m.kind },
   { key: 'format', header: 'Model', render: (m) => <div className="stack"><span>{m.modelFormat || '—'}</span><small className="muted truncate" title={m.storageUri}>{m.storageUri}</small></div>, secondary: true },
   { key: 'replicas', header: 'Replika', render: replicas, sortValue: (m) => m.minReplicas ?? 1, secondary: true },
-  { key: 'gpu', header: 'GPU', render: (m) => m.gpu || '—', sortValue: (m) => m.gpu },
+  { key: 'gpu', header: 'GPU / MIG', render: (m) => acceleratorLabel(m) || '—', sortValue: (m) => m.gpu * 100 + Object.values(m.mig ?? {}).reduce((sum, n) => sum + n, 0) },
   { key: 'age', header: 'Yaş', render: (m) => formatRelative(m.createdAt), sortValue: (m) => m.createdAt ?? '', secondary: true },
 ]
 
@@ -47,7 +47,7 @@ function ModelDetail({ model }: { model: Model }) {
     ['Model formatı', model.modelFormat],
     ['Storage URI', model.storageUri && <code>{model.storageUri}</code>],
     ['Endpoint', model.url && <a href={model.url} target="_blank" rel="noreferrer"><code>{model.url}</code></a>],
-    ['GPU / replika', model.gpu || undefined],
+    ['GPU / MIG (replika başına)', acceleratorLabel(model)],
     ['Oluşturulma', formatDateTime(model.createdAt)],
     ['Durum değişimi', model.stateSince && formatDateTime(model.stateSince)],
     ['Mesaj', model.message && <span className="issue">{model.message}</span>],
@@ -61,15 +61,18 @@ export function Models({ type, models }: { type: ModelType; models: Model[] }) {
 
   const ready = models.filter(FILTERS.Ready).length
   const gpus = models.reduce((sum, model) => sum + allocatedGpu(model), 0)
+  const migSlices = useMemo(() => models.flatMap((m) => allocatedMig(m).map((slice) => ({ ...slice, namespace: m.namespace }))), [models])
+  const migTotal = migSlices.reduce((sum, slice) => sum + slice.count, 0)
   const kpis = [
     { key: 'all', label: 'Toplam model', value: models.length },
     { key: 'Ready', label: 'Hazır', value: ready, tone: 'good' as const },
     { key: 'NotReady', label: 'Hazır değil', value: models.length - ready, tone: 'critical' as const },
-    { key: 'gpu', label: 'Ayrılan GPU', value: gpus, sub: 'min. replika × GPU' },
+    { key: 'gpu', label: 'Ayrılan GPU', value: gpus, sub: migTotal ? `+ ${migTotal} MIG dilimi` : 'min. replika × GPU' },
   ]
 
   const healthRows = useMemo(() => groupRows(models, (m) => m.namespace, modelTone, NAMESPACE_ROWS), [models])
   const gpuRows = useMemo(() => groupRows(models, (m) => m.namespace, () => 'gpu', NAMESPACE_ROWS, allocatedGpu), [models])
+  const migRows = useMemo(() => groupRows(migSlices, (s) => s.profile, () => 'mig', NAMESPACE_ROWS, (s) => s.count), [migSlices])
   const visible = useMemo(() => models.filter((m) => FILTERS[filter](m) && matchesQuery(query, m.name, m.namespace, m.runtime, m.modelFormat)), [models, filter, query])
 
   return <div className="page">
@@ -78,8 +81,13 @@ export function Models({ type, models }: { type: ModelType; models: Model[] }) {
       <Panel title="Namespace bazında durum" subtitle="Hazır / sorunlu model sayısı">
         <StackedBars rows={healthRows} series={HEALTH_SERIES.filter((s) => s.key !== 'info')} empty="Model bulunamadı." />
       </Panel>
-      <Panel title="GPU dağılımı" subtitle="Namespace başına ayrılan GPU">
-        <StackedBars rows={gpuRows} series={[{ key: 'gpu', label: 'GPU', color }]} empty="GPU kullanan model yok." />
+      <Panel title="GPU / MIG dağılımı" subtitle="Minimum replikada ayrılan tam GPU ve MIG dilimleri">
+        <h3 className="chart-heading">Tam GPU · namespace bazında</h3>
+        <StackedBars rows={gpuRows} series={[{ key: 'gpu', label: 'GPU', color }]} empty="Tam GPU kullanan model yok." />
+        {migRows.length ? <>
+          <h3 className="chart-heading">MIG dilimleri · profil bazında</h3>
+          <StackedBars rows={migRows} series={[{ key: 'mig', label: 'MIG dilimi', color }]} empty="" />
+        </> : null}
       </Panel>
     </div>
     <Panel title="Modeller" subtitle={`${visible.length} / ${models.length} model`}

@@ -61,5 +61,20 @@ export function batchTone(workflow: CronWorkflow): Tone {
   return tone === 'warning' ? 'info' : tone
 }
 
-/** GPUs held at minimum scale; KServe keeps one replica unless minReplicas says otherwise. */
-export const allocatedGpu = (model: Model) => model.gpu * (model.minReplicas ?? 1)
+/** Replicas held at minimum scale; KServe keeps one unless minReplicas says otherwise. */
+const minScale = (model: Model) => model.minReplicas ?? 1
+
+export const allocatedGpu = (model: Model) => model.gpu * minScale(model)
+
+/** MIG slices held at minimum scale, per profile. */
+export const allocatedMig = (model: Model) =>
+  Object.entries(model.mig ?? {}).map(([profile, count]) => ({ profile, count: count * minScale(model) }))
+
+export const usesAccelerator = (model: Model) => model.gpu > 0 || Object.keys(model.mig ?? {}).length > 0
+
+/** "2 GPU" / "1g.5gb ×2" / "1 GPU · 3g.20gb ×1" for one replica. */
+export function acceleratorLabel(model: Model) {
+  const parts = Object.entries(model.mig ?? {}).map(([profile, count]) => `${profile} ×${count}`)
+  if (model.gpu) parts.unshift(`${model.gpu} GPU`)
+  return parts.join(' · ')
+}

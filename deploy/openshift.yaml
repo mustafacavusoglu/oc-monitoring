@@ -29,6 +29,8 @@ data:
   LLM_RUNTIME_IMAGE_KEYWORDS: vllm
   ML_RUNTIME_IMAGE_KEYWORDS: triton
   GPU_RESOURCE_NAME: nvidia.com/gpu
+  # MIG slices (mixed strategy), e.g. nvidia.com/mig-1g.5gb; the suffix is the profile.
+  MIG_RESOURCE_PREFIX: nvidia.com/mig-
 
   # Watched APIs (group/version/resource), adjustable per cluster version.
   CRONWORKFLOW_RESOURCE: argoproj.io/v1alpha1/cronworkflows
@@ -114,7 +116,7 @@ spec:
           type: RuntimeDefault
       containers:
         - name: dashboard
-          image: mustafa12/monitor:0.0.21
+          image: mustafa12/monitor:0.0.22
           imagePullPolicy: IfNotPresent
           envFrom:
             - configMapRef:

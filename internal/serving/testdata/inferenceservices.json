@@ -27,7 +27,19 @@
     "apiVersion": "serving.kserve.io/v1beta1",
     "kind": "InferenceService",
     "metadata": { "name": "fraud-xgb", "namespace": "fraud" },
-    "spec": { "predictor": { "model": { "runtime": "triton-runtime", "modelFormat": { "name": "onnx" }, "storageUri": "s3://models/fraud" } } },
+    "spec": {
+      "predictor": {
+        "model": {
+          "runtime": "triton-runtime",
+          "modelFormat": { "name": "onnx" },
+          "storageUri": "s3://models/fraud",
+          "resources": {
+            "requests": { "cpu": "2", "nvidia.com/mig-1g.5gb": "1" },
+            "limits": { "nvidia.com/mig-1g.5gb": "2", "nvidia.com/mig-3g.20gb": 1 }
+          }
+        }
+      }
+    },
     "status": {
       "conditions": [
         { "type": "Ready", "status": "False", "reason": "RevisionMissing", "message": "Revision failed to become ready", "lastTransitionTime": "2026-09-27T10:00:00Z" }

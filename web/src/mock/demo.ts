@@ -20,6 +20,16 @@ function seeded(seed: number) {
 
 type ModelSeed = [namespace: string, name: string, runtime: string, format: string, gpu: number, replicas: [number, number], state?: Model['state'], reason?: string, message?: string]
 
+/** Models running on MIG slices instead of full GPUs (per replica). */
+const MIG_BY_MODEL: Record<string, Record<string, number>> = {
+  'phi-3-mini-dev': { '3g.20gb': 1 },
+  'bge-m3-embedding': { '2g.10gb': 1 },
+  'fraud-xgboost': { '1g.5gb': 1 },
+  'ocr-detector': { '1g.5gb': 1 },
+  'ocr-recognizer': { '1g.5gb': 2 },
+  'wav2vec2-tr': { '2g.10gb': 1 },
+}
+
 const LLM_IMAGE = 'quay.io/modh/vllm:rhoai-2.19-cuda'
 const TRITON_IMAGE = 'nvcr.io/nvidia/tritonserver:24.08-py3'
 
@@ -112,7 +122,8 @@ function buildModel([namespace, name, runtime, format, gpu, [min, max], state = 
     message,
     minReplicas: min,
     maxReplicas: max,
-    gpu,
+    gpu: MIG_BY_MODEL[name] ? 0 : gpu,
+    mig: MIG_BY_MODEL[name],
     createdAt: iso(created),
     stateSince: iso(state === 'Ready' ? created + 6 * MINUTE : now - (index + 1) * 47 * MINUTE),
   }

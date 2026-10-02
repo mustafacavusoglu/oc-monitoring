@@ -59,6 +59,8 @@ export type Model = {
   minReplicas?: number
   maxReplicas?: number
   gpu: number
+  /** MIG slices per profile (e.g. "1g.5gb": 2), per replica. */
+  mig?: Record<string, number>
   createdAt?: string
   stateSince?: string
 }

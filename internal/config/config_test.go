@@ -23,6 +23,7 @@ var validEnv = map[string]string{
 	"LLM_RUNTIME_IMAGE_KEYWORDS":     "vllm",
 	"ML_RUNTIME_IMAGE_KEYWORDS":      "triton, tritonserver",
 	"GPU_RESOURCE_NAME":              "nvidia.com/gpu",
+	"MIG_RESOURCE_PREFIX":            "nvidia.com/mig-",
 	"CRONWORKFLOW_RESOURCE":          "argoproj.io/v1alpha1/cronworkflows",
 	"WORKFLOW_RESOURCE":              "argoproj.io/v1alpha1/workflows",
 	"INFERENCE_SERVICE_RESOURCE":     "serving.kserve.io/v1beta1/inferenceservices",

@@ -45,6 +45,8 @@ type ServingRules struct {
 	LLMImageKeywords []string
 	MLImageKeywords  []string
 	GPUResourceName  string
+	// MIGResourcePrefix matches MIG slice resources; the rest of the name is the profile.
+	MIGResourcePrefix string
 }
 
 // Resources holds the API group/version/resource of each watched CRD so that
@@ -74,9 +76,10 @@ func Load() (Config, error) {
 		RegistryCheckConcurrency: e.positiveInt("REGISTRY_CHECK_CONCURRENCY"),
 		UpstreamTimeout:          e.duration("UPSTREAM_TIMEOUT"),
 		Serving: ServingRules{
-			LLMImageKeywords: e.list("LLM_RUNTIME_IMAGE_KEYWORDS"),
-			MLImageKeywords:  e.list("ML_RUNTIME_IMAGE_KEYWORDS"),
-			GPUResourceName:  e.str("GPU_RESOURCE_NAME"),
+			LLMImageKeywords:  e.list("LLM_RUNTIME_IMAGE_KEYWORDS"),
+			MLImageKeywords:   e.list("ML_RUNTIME_IMAGE_KEYWORDS"),
+			GPUResourceName:   e.str("GPU_RESOURCE_NAME"),
+			MIGResourcePrefix: e.str("MIG_RESOURCE_PREFIX"),
 		},
 		Resources: Resources{
 			CronWorkflows:        e.resource("CRONWORKFLOW_RESOURCE"),

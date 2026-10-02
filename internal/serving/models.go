@@ -57,7 +57,7 @@ func inferenceServiceModel(isvc *unstructured.Unstructured, runtimes map[string]
 	m.StorageURI, _, _ = unstructured.NestedString(isvc.Object, "spec", "predictor", "model", "storageUri")
 	m.MinReplicas = cluster.NestedInt(isvc.Object, "spec", "predictor", "minReplicas")
 	m.MaxReplicas = cluster.NestedInt(isvc.Object, "spec", "predictor", "maxReplicas")
-	m.GPU = gpuCount(isvc.Object, rules.GPUResourceName, "spec", "predictor", "model", "resources")
+	addAccelerators(&m, isvc.Object, rules, "spec", "predictor", "model", "resources")
 	return m, true
 }
 
@@ -72,7 +72,7 @@ func llmInferenceServiceModel(llmisvc *unstructured.Unstructured, rules config.S
 	items, _ := containers.([]any)
 	for _, item := range items {
 		if container, ok := item.(map[string]any); ok {
-			m.GPU += gpuCount(container, rules.GPUResourceName, "resources")
+			addAccelerators(&m, container, rules, "resources")
 		}
 	}
 	return m
@@ -146,17 +146,36 @@ func containerImages(object map[string]any, path ...string) []string {
 	return images
 }
 
-// gpuCount reads the GPU limit (falling back to the request) of a resources block.
-func gpuCount(object map[string]any, gpuResource string, resourcesPath ...string) int64 {
-	for _, kind := range []string{"limits", "requests"} {
-		path := append(append([]string{}, resourcesPath...), kind, gpuResource)
-		if raw, found, _ := unstructured.NestedFieldNoCopy(object, path...); found {
-			if quantity, err := resource.ParseQuantity(fmt.Sprint(raw)); err == nil {
-				return quantity.Value()
+// addAccelerators adds the full-GPU and MIG-slice counts of a resources block
+// to m. MIG resources (e.g. nvidia.com/mig-1g.5gb) are keyed by profile.
+func addAccelerators(m *model.Model, object map[string]any, rules config.ServingRules, resourcesPath ...string) {
+	for name, count := range resourceCounts(object, resourcesPath) {
+		switch {
+		case name == rules.GPUResourceName:
+			m.GPU += count
+		case strings.HasPrefix(name, rules.MIGResourcePrefix):
+			if m.MIG == nil {
+				m.MIG = make(map[string]int64)
+			}
+			m.MIG[strings.TrimPrefix(name, rules.MIGResourcePrefix)] += count
+		}
+	}
+}
+
+// resourceCounts reads every resource quantity of a resources block; a limit
+// overrides the request of the same resource.
+func resourceCounts(object map[string]any, resourcesPath []string) map[string]int64 {
+	counts := make(map[string]int64)
+	for _, kind := range []string{"requests", "limits"} {
+		raw, _, _ := unstructured.NestedFieldNoCopy(object, append(append([]string{}, resourcesPath...), kind)...)
+		quantities, _ := raw.(map[string]any)
+		for name, value := range quantities {
+			if quantity, err := resource.ParseQuantity(fmt.Sprint(value)); err == nil {
+				counts[name] = quantity.Value()
 			}
 		}
 	}
-	return 0
+	return counts
 }
 
 func first(values []string) string {

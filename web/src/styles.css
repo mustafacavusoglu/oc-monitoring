@@ -229,6 +229,8 @@ td.empty { padding: 32px; text-align: center; color: var(--muted); }
 .item-list .stack { min-width: 0; }
 
 /* Charts */
+.chart-heading { margin: 0 0 10px; color: var(--text-2); font-size: 12px; font-weight: 600; }
+.chart-heading:not(:first-child) { margin-top: 18px; }
 .chart-empty { margin: 24px 0; text-align: center; color: var(--muted); }
 .chart-note { margin: 10px 0 0; color: var(--muted); font-size: 12px; }
 .legend { display: flex; flex-wrap: wrap; gap: 6px 14px; margin: 0 0 12px; padding: 0; list-style: none; font-size: 12px; color: var(--text-2); }

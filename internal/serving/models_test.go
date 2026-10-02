@@ -9,9 +9,10 @@ import (
 )
 
 var rules = config.ServingRules{
-	LLMImageKeywords: []string{"vllm"},
-	MLImageKeywords:  []string{"triton"},
-	GPUResourceName:  "nvidia.com/gpu",
+	LLMImageKeywords:  []string{"vllm"},
+	MLImageKeywords:   []string{"triton"},
+	GPUResourceName:   "nvidia.com/gpu",
+	MIGResourcePrefix: "nvidia.com/mig-",
 }
 
 func TestBuildModelsClassifiesByRuntimeImage(t *testing.T) {
@@ -37,7 +38,14 @@ func TestBuildModelsClassifiesByRuntimeImage(t *testing.T) {
 		t.Fatalf("llama-chat details = %+v", llama)
 	}
 
+	if len(llama.MIG) != 0 {
+		t.Fatalf("llama-chat MIG = %v, want none", llama.MIG)
+	}
+
 	fraud := got["fraud-xgb"]
+	if fraud.GPU != 0 || fraud.MIG["1g.5gb"] != 2 || fraud.MIG["3g.20gb"] != 1 {
+		t.Fatalf("fraud-xgb accelerators = gpu %d mig %v, want 0 and 1g.5gb:2 3g.20gb:1", fraud.GPU, fraud.MIG)
+	}
 	if fraud.Type != model.TypeML || fraud.State != model.ModelNotReady || fraud.Reason != "RevisionMissing" || fraud.StateSince == nil {
 		t.Fatalf("fraud-xgb = %+v", fraud)
 	}
