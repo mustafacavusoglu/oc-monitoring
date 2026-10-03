@@ -159,7 +159,7 @@ function buildCronWorkflow([namespace, name, schedule]: (typeof BATCH_SEEDS)[num
 
   const podPhase = latest?.phase === 'Running' ? 'Running' : latest?.phase === 'Succeeded' ? 'Succeeded' : 'Failed'
   return {
-    namespace, name, schedules: [schedule],
+    namespace, name, project: namespace, schedules: [schedule],
     timezone: index % 5 === 0 ? 'UTC (assumed)' : 'Europe/Istanbul',
     suspended,
     active: running,

@@ -41,8 +41,9 @@ export default function App() {
   }, [theme])
 
   const { models, cronWorkflows, projects } = useMemo(() => {
-    const inScope = <T extends { namespace: string }>(items: T[] = []) =>
-      namespace === ALL_NAMESPACES ? items : items.filter((item) => item.namespace === namespace)
+    // A CronWorkflow in a shared namespace also matches its project's namespace.
+    const inScope = <T extends { namespace: string; project?: string }>(items: T[] = []) =>
+      namespace === ALL_NAMESPACES ? items : items.filter((item) => item.namespace === namespace || item.project === namespace)
     return { models: inScope(data?.models), cronWorkflows: inScope(data?.cronWorkflows), projects: inScope(data?.projects) }
   }, [data, namespace])
 

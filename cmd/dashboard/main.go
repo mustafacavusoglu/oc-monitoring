@@ -33,14 +33,21 @@ func main() {
 
 	projectSource := projects.NewSource(cfg, nil)
 	res := cfg.Resources
-	// Resources are watched cluster-wide with one informer each and filtered
-	// by project in memory; only pods are watched per project namespace.
+	// Resources are watched cluster-wide with one informer each and tied to
+	// projects in memory. Pods are watched only where they are shown: the
+	// namespaces that hold CronWorkflows and the Custom Serve namespaces.
 	clusterWatcher := cluster.NewWatcher("cluster", clients,
 		[]schema.GroupVersionResource{res.CronWorkflows, res.Workflows, res.InferenceServices, res.ServingRuntimes, res.LLMInferenceServices, cluster.Namespaces},
 		cluster.AllNamespaces)
 	podWatcher := cluster.NewWatcher("pods", clients,
 		[]schema.GroupVersionResource{cluster.Pods},
-		func() []string { return projectSource.Snapshot().AllNamespaces() })
+		func() []string {
+			namespaces := projectSource.Snapshot().CustomServeNamespaces()
+			for _, cronWorkflow := range clusterWatcher.Snapshot().Objects[res.CronWorkflows] {
+				namespaces = append(namespaces, cronWorkflow.GetNamespace())
+			}
+			return namespaces
+		})
 	imageChecker := registry.NewChecker(cfg.NexusManifestURLTemplate, cfg.ImageCacheTTL, cfg.RegistryCheckConcurrency, cfg.UpstreamTimeout)
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)

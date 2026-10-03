@@ -69,6 +69,7 @@ type WorkflowRun struct {
 type CronWorkflow struct {
 	Namespace       string        `json:"namespace"`
 	Name            string        `json:"name"`
+	Project         string        `json:"project,omitempty"` // project its image names
 	Schedules       []string      `json:"schedules"`
 	Timezone        string        `json:"timezone,omitempty"`
 	Suspended       bool          `json:"suspended"`

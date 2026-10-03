@@ -34,6 +34,8 @@ export type WorkflowRun = RunSummary & {
 export type CronWorkflow = {
   namespace: string
   name: string
+  /** Project its image names (bch-<project>:<imageId>); may differ from namespace. */
+  project?: string
   schedules: string[]
   timezone?: string
   suspended: boolean

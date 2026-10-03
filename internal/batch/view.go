@@ -3,6 +3,7 @@
 package batch
 
 import (
+	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -23,7 +24,10 @@ const (
 
 var cronParser = cron.NewParser(cron.Minute | cron.Hour | cron.Dom | cron.Month | cron.Dow | cron.Descriptor)
 
-func BuildViews(cronWorkflows, workflows, pods []*unstructured.Unstructured, now time.Time) []model.CronWorkflow {
+// BuildViews turns every CronWorkflow into a row. Each row is tied to the
+// project its image names (e.g. bch-<project>:<imageId>); a CronWorkflow need
+// not live in its project's namespace.
+func BuildViews(cronWorkflows, workflows, pods []*unstructured.Unstructured, projects []string, now time.Time) []model.CronWorkflow {
 	workflowsByCron := groupByLabel(workflows, cronWorkflowLabel)
 	podsByWorkflow := groupByLabel(pods, workflowLabel)
 
@@ -52,7 +56,9 @@ func BuildViews(cronWorkflows, workflows, pods []*unstructured.Unstructured, now
 			view.LastRun = &latest
 		}
 
-		view.Images = projectImages(cronWorkflow.Object, view.Namespace)
+		images := templateImages(cronWorkflow.Object, "spec", "workflowSpec", "templates")
+		view.Project = projectOf(images, view.Namespace, projects)
+		view.Images = projectImages(images, view.Project)
 		if !view.Suspended {
 			view.NextScheduledAt, view.ScheduleError = nextScheduledTime(view.Schedules, view.Timezone, now)
 		}
@@ -83,10 +89,30 @@ func groupByLabel(objects []*unstructured.Unstructured, label string) map[string
 
 // projectImages returns the workflowSpec images whose name contains the
 // project namespace; only those are checked against the registry.
-func projectImages(cronWorkflow map[string]any, namespace string) []model.ImageResult {
+// projectOf returns the longest project name found in an image repository
+// name, falling back to the CronWorkflow's namespace when that is a project.
+func projectOf(images []string, namespace string, projects []string) string {
+	best := ""
+	for _, project := range projects {
+		if len(project) > len(best) && slices.ContainsFunc(images, func(image string) bool { return imageBelongsToProject(image, project) }) {
+			best = project
+		}
+	}
+	if best == "" && slices.Contains(projects, namespace) {
+		return namespace
+	}
+	return best
+}
+
+// projectImages returns the images whose name contains the project; only
+// those are checked against the registry.
+func projectImages(images []string, project string) []model.ImageResult {
 	results := make([]model.ImageResult, 0)
-	for _, image := range templateImages(cronWorkflow, "spec", "workflowSpec", "templates") {
-		if imageBelongsToProject(image, namespace) {
+	if project == "" {
+		return results
+	}
+	for _, image := range images {
+		if imageBelongsToProject(image, project) {
 			results = append(results, model.ImageResult{Reference: image, ImageID: imageIDFromReference(image), Status: model.ImageUnknown})
 		}
 	}

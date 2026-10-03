@@ -33,7 +33,10 @@ const imageSummary = (images: ImageResult[]) =>
 const lastRunTime = (w: CronWorkflow) => w.lastRun?.startedAt ?? w.lastRun?.createdAt ?? w.lastScheduledAt
 
 const columns: Column<CronWorkflow>[] = [
-  { key: 'name', header: 'CronWorkflow', render: (w) => <NameCell name={w.name} namespace={w.namespace} />, sortValue: (w) => w.name },
+  {
+    key: 'name', header: 'CronWorkflow', sortValue: (w) => w.name,
+    render: (w) => <NameCell name={w.name} namespace={w.project && w.project !== w.namespace ? `${w.namespace} · proje: ${w.project}` : w.namespace} />,
+  },
   {
     key: 'state', header: 'Durum', sortValue: (w) => batchPhase(w),
     render: (w) => <div className="stack"><StatusBadge value={batchPhase(w)} />{w.suspended ? <StatusBadge value="suspended" /> : null}</div>,
@@ -119,7 +122,7 @@ export function Batch({ cronWorkflows, now }: { cronWorkflows: CronWorkflow[]; n
     return { key: `${w.namespace}/${w.name}`, label: w.name, detail: `${w.namespace} · ${formatTime(new Date(at))}`, at }
   }), [cronWorkflows])
 
-  const visible = useMemo(() => cronWorkflows.filter((w) => FILTERS[filter](w) && matchesQuery(query, w.name, w.namespace)), [cronWorkflows, filter, query])
+  const visible = useMemo(() => cronWorkflows.filter((w) => FILTERS[filter](w) && matchesQuery(query, w.name, w.namespace, w.project)), [cronWorkflows, filter, query])
 
   return <div className="page">
     <KpiRow items={kpis} active={filter} onSelect={(key) => setFilter(key as Filter)} />

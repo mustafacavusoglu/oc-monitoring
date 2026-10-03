@@ -54,17 +54,20 @@ func namespace(name string) *unstructured.Unstructured {
 	return &unstructured.Unstructured{Object: map[string]any{"metadata": map[string]any{"name": name}}}
 }
 
-func TestDashboardEndpointCombinesBatchAndModels(t *testing.T) {
-	cron := object("argoproj.io/v1alpha1", "CronWorkflow", "payments", "daily-job", map[string]any{
+func cronWorkflow(namespace, image string) *unstructured.Unstructured {
+	return object("argoproj.io/v1alpha1", "CronWorkflow", namespace, "daily-job", map[string]any{
 		"schedule": "0 12 * * *",
 		"workflowSpec": map[string]any{"templates": []any{
-			map[string]any{"name": "run", "container": map[string]any{"image": "registry.example.test/payments/app:v1"}},
+			map[string]any{"name": "run", "container": map[string]any{"image": image}},
 		}},
 	})
-	otherTeam := cron.DeepCopy()
-	otherTeam.SetNamespace("other-team")
-	cmCron := cron.DeepCopy()
-	cmCron.SetNamespace("cm-proje")
+}
+
+func TestDashboardEndpointCombinesBatchAndModels(t *testing.T) {
+	own := cronWorkflow("payments", "registry.example.test/payments/app:v1")
+	// A CronWorkflow in a shared namespace belongs to the project its image names.
+	shared := cronWorkflow("mlops-batch", "bch-cm-proje:v2")
+	unrelated := cronWorkflow("other-team", "busybox:1.36")
 	runtime := object("serving.kserve.io/v1alpha1", "ServingRuntime", "chatbot", "vllm", map[string]any{
 		"containers": []any{map[string]any{"image": "quay.io/vllm/vllm-openai:0.6"}},
 	})
@@ -81,9 +84,9 @@ func TestDashboardEndpointCombinesBatchAndModels(t *testing.T) {
 		},
 		Cluster: func() cluster.Snapshot {
 			return cluster.Snapshot{Objects: map[schema.GroupVersionResource][]*unstructured.Unstructured{
-				resources.CronWorkflows:   {cron, otherTeam, cmCron},
+				resources.CronWorkflows:   {own, shared, unrelated},
 				resources.ServingRuntimes: {runtime}, resources.InferenceServices: {isvc},
-				cluster.Namespaces: {namespace("payments"), namespace("chatbot"), namespace("other-team"), namespace("cm-proje")},
+				cluster.Namespaces: {namespace("payments"), namespace("chatbot"), namespace("other-team"), namespace("mlops-batch")},
 			}, Health: model.SourceHealth{State: model.StateReady}}
 		},
 		Pods:   func() cluster.Snapshot { return cluster.Snapshot{Health: model.SourceHealth{State: model.StateReady}} },
@@ -113,24 +116,28 @@ func TestDashboardEndpointCombinesBatchAndModels(t *testing.T) {
 	if response.RefreshIntervalSeconds != 30 {
 		t.Fatalf("refresh interval = %d, want 30", response.RefreshIntervalSeconds)
 	}
-	// Every project's CronWorkflows are shown; only BCH projects get Nexus checks.
-	if len(response.CronWorkflows) != 2 || response.CronWorkflows[0].Namespace != "cm-proje" || len(response.CronWorkflows[0].Images) != 0 {
-		t.Fatalf("cron workflows = %#v, want cm-proje (no image check) and payments", response.CronWorkflows)
+	// Every CronWorkflow is shown; only BCH projects get Nexus checks.
+	var projectsOf []string
+	for _, row := range response.CronWorkflows {
+		projectsOf = append(projectsOf, row.Namespace+"→"+row.Project)
 	}
-	if response.CronWorkflows[1].Images[0].Status != model.ImageExist || response.Sources.Registry.State != model.StateReady {
-		t.Fatalf("payments images = %#v, registry = %#v", response.CronWorkflows[1].Images, response.Sources.Registry)
+	if want := []string{"mlops-batch→cm-proje", "other-team→", "payments→payments"}; !reflect.DeepEqual(projectsOf, want) {
+		t.Fatalf("cron workflow projects = %v, want %v", projectsOf, want)
+	}
+	if len(response.CronWorkflows[0].Images) != 0 || response.CronWorkflows[2].Images[0].Status != model.ImageExist || response.Sources.Registry.State != model.StateReady {
+		t.Fatalf("images = %#v / %#v, registry = %#v", response.CronWorkflows[0].Images, response.CronWorkflows[2].Images, response.Sources.Registry)
 	}
 	if len(response.Models) != 1 || response.Models[0].Type != model.TypeLLM || response.Models[0].Name != "llama" {
 		t.Fatalf("models = %#v", response.Models)
 	}
-	if want := []string{"chatbot", "cm-proje", "ghost", "payments"}; !reflect.DeepEqual(response.Namespaces, want) {
+	if want := []string{"chatbot", "cm-proje", "ghost", "mlops-batch", "other-team", "payments"}; !reflect.DeepEqual(response.Namespaces, want) {
 		t.Fatalf("namespaces = %v, want %v", response.Namespaces, want)
 	}
 	// Coverage shows the project without a namespace instead of hiding it.
 	want := []model.Project{
 		{Key: "PAYMENTS", Namespace: "payments", Batch: true, NamespaceExists: true, CronWorkflows: 1},
 		{Key: "GHOST", Namespace: "ghost", Batch: true},
-		{Key: "CM_PROJE", Namespace: "cm-proje", NamespaceExists: true, CronWorkflows: 1},
+		{Key: "CM_PROJE", Namespace: "cm-proje", CronWorkflows: 1},
 	}
 	if !reflect.DeepEqual(response.Projects, want) {
 		t.Fatalf("projects = %+v, want %+v", response.Projects, want)
