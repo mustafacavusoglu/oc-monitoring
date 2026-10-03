@@ -148,7 +148,8 @@ nav { display: flex; flex-direction: column; gap: 2px; }
 .ns-options button[aria-selected="true"] { color: var(--accent); font-weight: 600; }
 
 /* Notices */
-.notice { padding: 10px 14px; border-radius: 8px; background: var(--critical-bg); color: var(--critical-ink); font-size: 13px; }
+.notice { padding: 10px 14px; border-radius: 8px; background: var(--critical-bg); color: var(--critical-ink); font-size: 13px; overflow-wrap: anywhere; }
+.notice-warning { background: var(--warning-bg); color: var(--warning-ink); }
 .loading { padding: 64px; text-align: center; color: var(--muted); }
 
 /* KPI tiles */

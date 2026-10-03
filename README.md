@@ -70,7 +70,7 @@ cd web && npm ci && npm run dev    # http://localhost:5173
 # Testler ve build
 go test ./... -count=1
 npm run build --prefix web
-docker build -t mustafa12/monitor:0.0.22 .
+docker buildx build --platform linux/amd64 -t mustafa12/monitor:0.0.23 --push .
 ```
 
 `npm run dev`, Vite dev sunucusunda `/api/dashboard` isteğini `web/src/mock/demo.ts` içindeki deterministik dummy veriyle yanıtlar. Bu dosya yalnızca dev sunucusunda yüklenir, production bundle’a girmez.
@@ -106,7 +106,7 @@ ServiceAccount’a ClusterRole ile yalnızca `get`, `list`, `watch` izni verilir
 - core: `pods`
 - `serving.kserve.io`: `inferenceservices`, `servingruntimes`, `llminferenceservices`
 
-Model kaynakları cluster genelinde izlendiği için ClusterRoleBinding gerekir; batch okumaları yalnızca seçilen namespace’lerle sınırlıdır. Kapsamı platform ekibinizle doğrulayın. Cluster’da `LLMInferenceService` CRD’si yoksa model kaynağı “Sorunlu” görünür; diğer veriler etkilenmez.
+Model kaynakları cluster genelinde izlendiği için ClusterRoleBinding gerekir; batch okumaları yalnızca seçilen namespace’lerle sınırlıdır. Kapsamı platform ekibinizle doğrulayın. Açılışta her API discovery ile kontrol edilir: cluster’da sunulmayan bir kaynak (ör. `LLMInferenceService` CRD’si kurulu değilse ya da sürümü farklıysa) atlanır, pod loguna `skipping resource not served by the cluster` yazılır ve kaynak durumunun açıklamasında gösterilir. CRD sonradan kurulursa pod’u yeniden başlatın.
 
 ### Ağ erişimi
 

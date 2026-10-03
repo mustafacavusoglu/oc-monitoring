@@ -11,11 +11,13 @@ import (
 
 	"monitor/internal/model"
 
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	k8swatch "k8s.io/apimachinery/pkg/watch"
+	"k8s.io/client-go/discovery"
 	"k8s.io/client-go/dynamic"
 	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/cache"
@@ -52,6 +54,7 @@ type Watcher struct {
 	name       string
 	client     dynamic.Interface
 	resources  []schema.GroupVersionResource
+	missing    []string // configured resources the API server does not serve
 	namespaces func() []string
 
 	mu            sync.RWMutex
@@ -61,20 +64,72 @@ type Watcher struct {
 	lastStatusLog time.Time
 }
 
-func NewClient() (dynamic.Interface, error) {
-	cfg, err := rest.InClusterConfig()
-	if err != nil {
-		return nil, fmt.Errorf("load in-cluster Kubernetes config: %w", err)
-	}
-	client, err := dynamic.NewForConfig(cfg)
-	if err != nil {
-		return nil, fmt.Errorf("create Kubernetes dynamic client: %w", err)
-	}
-	return client, nil
+type Clients struct {
+	Dynamic   dynamic.Interface
+	Discovery discovery.DiscoveryInterface
 }
 
-func NewWatcher(name string, client dynamic.Interface, resources []schema.GroupVersionResource, namespaces func() []string) *Watcher {
-	return &Watcher{name: name, client: client, resources: resources, namespaces: namespaces, watches: make(map[string]*namespaceWatch)}
+func NewClients() (Clients, error) {
+	cfg, err := rest.InClusterConfig()
+	if err != nil {
+		return Clients{}, fmt.Errorf("load in-cluster Kubernetes config: %w", err)
+	}
+	dynamicClient, err := dynamic.NewForConfig(cfg)
+	if err != nil {
+		return Clients{}, fmt.Errorf("create Kubernetes dynamic client: %w", err)
+	}
+	discoveryClient, err := discovery.NewDiscoveryClientForConfig(cfg)
+	if err != nil {
+		return Clients{}, fmt.Errorf("create Kubernetes discovery client: %w", err)
+	}
+	return Clients{Dynamic: dynamicClient, Discovery: discoveryClient}, nil
+}
+
+// NewWatcher watches only the resources the API server serves. A configured
+// resource whose CRD is not installed (or has another version) is skipped and
+// reported in the health message instead of failing its informer forever.
+func NewWatcher(name string, clients Clients, resources []schema.GroupVersionResource, namespaces func() []string) *Watcher {
+	served, missing := ServedResources(clients.Discovery, resources)
+	for _, resource := range missing {
+		log.Printf("%s watcher skipping resource not served by the cluster: %s (check the CRD and its version in the ConfigMap; restart after installing it)", name, resource)
+	}
+	return &Watcher{name: name, client: clients.Dynamic, resources: served, missing: missing, namespaces: namespaces, watches: make(map[string]*namespaceWatch)}
+}
+
+// ServedResources splits resources into those the API server serves and the
+// "group/version/resource" names of those it does not. Discovery failures
+// other than "not found" keep the resource so a transient error hides nothing.
+func ServedResources(client discovery.DiscoveryInterface, resources []schema.GroupVersionResource) ([]schema.GroupVersionResource, []string) {
+	var served []schema.GroupVersionResource
+	var missing []string
+	for _, gvr := range resources {
+		list, err := client.ServerResourcesForGroupVersion(gvr.GroupVersion().String())
+		switch {
+		case apierrors.IsNotFound(err):
+			missing = append(missing, resourceName(gvr))
+		case err != nil:
+			log.Printf("resource discovery failed, watching anyway: resource=%s error=%v", resourceName(gvr), err)
+			served = append(served, gvr)
+		case hasResource(list, gvr.Resource):
+			served = append(served, gvr)
+		default:
+			missing = append(missing, resourceName(gvr))
+		}
+	}
+	return served, missing
+}
+
+func hasResource(list *metav1.APIResourceList, resource string) bool {
+	for _, item := range list.APIResources {
+		if item.Name == resource {
+			return true
+		}
+	}
+	return false
+}
+
+func resourceName(gvr schema.GroupVersionResource) string {
+	return gvr.Group + "/" + gvr.Version + "/" + gvr.Resource
 }
 
 func (w *Watcher) Run(ctx context.Context) {
@@ -243,6 +298,8 @@ func (w *Watcher) Snapshot() Snapshot {
 		health.State, health.Error = model.StateDegraded, strings.Join(errs, "; ")
 	case !synced:
 		health.State, health.Error = model.StateSyncing, "waiting for informer cache sync"
+	case len(w.missing) > 0:
+		health.Error = "not served by the cluster, skipped: " + strings.Join(w.missing, ", ")
 	}
 	return Snapshot{Objects: objects, Health: health}
 }

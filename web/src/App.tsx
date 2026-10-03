@@ -1,7 +1,8 @@
 import { useEffect, useMemo, useState } from 'react'
-import { Sidebar, type NavItem } from './components/Sidebar'
+import { SOURCE_LABELS, Sidebar, type NavItem } from './components/Sidebar'
 import { Topbar, type Theme } from './components/Topbar'
 import { batchIssues, modelIssues } from './lib/status'
+import type { Sources } from './types'
 import { useDashboard } from './lib/useDashboard'
 import { ALL_NAMESPACES, useRoute, type Page } from './lib/useRoute'
 import { Batch } from './pages/Batch'
@@ -67,6 +68,8 @@ export default function App() {
         generatedAt={data?.generatedAt} refreshing={refreshing} onRefresh={() => void refresh()}
         theme={theme} onTheme={() => setTheme(theme === 'light' ? 'dark' : 'light')} onMenu={() => setMenuOpen(true)} />
       <main className="content">
+        {data ? (Object.keys(SOURCE_LABELS) as (keyof Sources)[]).filter((key) => data.sources[key].state === 'degraded').map((key) =>
+          <div key={key} className="notice notice-warning" role="status"><strong>{SOURCE_LABELS[key]}:</strong> {data.sources[key].error}</div>) : null}
         {error ? <div className="notice" role="alert">Veri yenilenemedi: {error}{data ? ' · Son alınan veriler gösteriliyor.' : ''}</div> : null}
         {!data ? (error ? null : <div className="loading">Veriler yükleniyor…</div>)
           : page === 'overview' ? <Overview models={models} cronWorkflows={cronWorkflows} onNavigate={goTo} />

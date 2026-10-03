@@ -26,7 +26,7 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
-	client, err := cluster.NewClient()
+	clients, err := cluster.NewClients()
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -35,10 +35,10 @@ func main() {
 	res := cfg.Resources
 	// Batch resources are watched only in the namespaces selected from the
 	// project file; models are watched cluster-wide.
-	batchWatcher := cluster.NewWatcher("batch", client,
+	batchWatcher := cluster.NewWatcher("batch", clients,
 		[]schema.GroupVersionResource{res.CronWorkflows, res.Workflows, cluster.Pods},
 		func() []string { return projectSource.Snapshot().Namespaces })
-	modelWatcher := cluster.NewWatcher("models", client,
+	modelWatcher := cluster.NewWatcher("models", clients,
 		[]schema.GroupVersionResource{res.InferenceServices, res.ServingRuntimes, res.LLMInferenceServices},
 		cluster.AllNamespaces)
 	imageChecker := registry.NewChecker(cfg.NexusManifestURLTemplate, cfg.ImageCacheTTL, cfg.RegistryCheckConcurrency, cfg.UpstreamTimeout)
