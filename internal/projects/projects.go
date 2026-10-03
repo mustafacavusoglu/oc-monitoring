@@ -7,30 +7,58 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"slices"
 	"sort"
 	"strings"
 	"sync"
 	"time"
 
 	"monitor/internal/config"
+	"monitor/internal/model"
 )
 
 type Snapshot struct {
-	Namespaces  []string
+	// Projects lists every batch or Custom Serve project.
+	Projects []model.Project
+	// Skipped lists project entries that could not be read.
+	Skipped     []string
 	LastSuccess *time.Time
 	Stale       bool
 	Error       string
 }
 
-type projectTarget struct {
-	Namespace   string
-	CheckImages bool
+func (s Snapshot) namespaces(match func(model.Project) bool) []string {
+	var namespaces []string
+	for _, project := range s.Projects {
+		if match(project) {
+			namespaces = append(namespaces, project.Namespace)
+		}
+	}
+	return namespaces
+}
+
+func (s Snapshot) BatchNamespaces() []string {
+	return s.namespaces(func(p model.Project) bool { return p.Batch })
+}
+
+func (s Snapshot) CustomServeNamespaces() []string {
+	return s.namespaces(func(p model.Project) bool { return p.CustomServe })
+}
+
+// WatchedNamespaces are the namespaces whose pods are watched.
+func (s Snapshot) WatchedNamespaces() []string {
+	return s.namespaces(func(p model.Project) bool { return p.Batch || p.CustomServe })
+}
+
+type rules struct {
+	batchKeyword    string // matched in the `serving` list
+	customServeType string // matched against the `type` field
 }
 
 type Source struct {
 	client   *azureClient
 	interval time.Duration
-	keyword  string
+	rules    rules
 
 	mu       sync.RWMutex
 	snapshot Snapshot
@@ -40,7 +68,10 @@ func NewSource(cfg config.Config, client *http.Client) *Source {
 	return &Source{
 		client:   newAzureClient(cfg, client),
 		interval: cfg.ProjectRefreshInterval,
-		keyword:  strings.ToLower(cfg.BatchServingKeyword),
+		rules: rules{
+			batchKeyword:    strings.ToLower(cfg.BatchServingKeyword),
+			customServeType: cfg.CustomServeType,
+		},
 		snapshot: Snapshot{Stale: true, Error: "waiting for first project refresh"},
 	}
 }
@@ -62,103 +93,96 @@ func (s *Source) Run(ctx context.Context) {
 func (s *Source) Snapshot() Snapshot {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
-	snapshot := s.snapshot
-	snapshot.Namespaces = append([]string(nil), s.snapshot.Namespaces...)
-	if s.snapshot.LastSuccess != nil {
-		lastSuccess := *s.snapshot.LastSuccess
-		snapshot.LastSuccess = &lastSuccess
-	}
-	return snapshot
+	return s.snapshot // slices are replaced, never mutated, so sharing is safe
 }
 
 func (s *Source) refresh(ctx context.Context) {
-	projects, err := s.client.projects(ctx)
-	if err == nil {
-		log.Printf("project source fetched project metadata: entries=%d", len(projects))
-		var namespaces []string
-		namespaces, err = selectNamespaces(projects, s.keyword)
-		if err == nil {
-			log.Printf("project source generated batch namespaces: keyword=%q project_entries=%d namespaces=%q", s.keyword, len(projects), namespaces)
-			now := time.Now().UTC()
-			s.mu.Lock()
-			s.snapshot = Snapshot{Namespaces: namespaces, LastSuccess: &now}
-			s.mu.Unlock()
-			log.Printf("project source refresh completed: project_entries=%d batch_namespaces=%d", len(projects), len(namespaces))
-			return
-		}
+	raw, err := s.client.projects(ctx)
+	if err != nil {
+		log.Printf("project source refresh failed: %v", err)
+		s.mu.Lock()
+		s.snapshot.Stale = true
+		s.snapshot.Error = err.Error()
+		s.mu.Unlock()
+		return
 	}
-
-	s.markStale(err)
-}
-
-func (s *Source) markStale(err error) {
-	log.Printf("project source refresh failed: %v", err)
+	projects, skipped := parseProjects(raw, s.rules)
+	snapshot := Snapshot{Projects: projects, Skipped: skipped}
+	log.Printf("project source refresh completed: entries=%d selected=%d batch=%d custom_serve=%d skipped=%d",
+		len(raw), len(projects), len(snapshot.BatchNamespaces()), len(snapshot.CustomServeNamespaces()), len(skipped))
+	for _, reason := range skipped {
+		log.Printf("project source skipped entry: %s", reason)
+	}
+	now := time.Now().UTC()
+	snapshot.LastSuccess = &now
 	s.mu.Lock()
-	s.snapshot.Stale = true
-	s.snapshot.Error = err.Error()
+	s.snapshot = snapshot
 	s.mu.Unlock()
 }
 
-// selectNamespaces returns the namespaces of projects whose `serving` list
-// contains keyword (lowercase, substring match).
-func selectNamespaces(projects map[string]json.RawMessage, keyword string) ([]string, error) {
-	targets, err := projectTargets(projects, keyword)
-	if err != nil {
-		return nil, err
+// parseProjects keeps batch and Custom Serve projects. A malformed entry is
+// skipped (and reported) instead of failing the whole project list.
+func parseProjects(raw map[string]json.RawMessage, r rules) ([]model.Project, []string) {
+	keys := make([]string, 0, len(raw))
+	for key := range raw {
+		keys = append(keys, key)
 	}
-	namespaces := make([]string, 0, len(targets))
-	for _, target := range targets {
-		if target.CheckImages {
-			namespaces = append(namespaces, target.Namespace)
-		}
-	}
-	return namespaces, nil
-}
+	sort.Strings(keys)
 
-func projectTargets(projects map[string]json.RawMessage, keyword string) ([]projectTarget, error) {
-	targets := make([]projectTarget, 0)
-	seenNamespaces := make(map[string]string, len(projects))
-	for projectKey, rawProject := range projects {
-		var project map[string]json.RawMessage
-		if err := json.Unmarshal(rawProject, &project); err != nil || project == nil {
-			return nil, fmt.Errorf("project %q must contain a JSON object", projectKey)
+	var projects []model.Project
+	var skipped []string
+	owners := make(map[string]string, len(raw))
+	for _, key := range keys {
+		var fields map[string]json.RawMessage
+		if err := json.Unmarshal(raw[key], &fields); err != nil || fields == nil {
+			skipped = append(skipped, fmt.Sprintf("%q is not a JSON object", key))
+			continue
 		}
-		namespace := strings.ToLower(strings.ReplaceAll(strings.TrimSpace(projectKey), "_", "-"))
+		namespace := strings.ToLower(strings.ReplaceAll(strings.TrimSpace(key), "_", "-"))
 		if namespace == "" {
-			return nil, fmt.Errorf("project keys must not be empty")
+			skipped = append(skipped, "empty project key")
+			continue
 		}
-		if previous, found := seenNamespaces[namespace]; found {
-			return nil, fmt.Errorf("project keys %q and %q normalize to the same namespace %q", previous, projectKey, namespace)
+		if owner, taken := owners[namespace]; taken {
+			skipped = append(skipped, fmt.Sprintf("%q maps to namespace %q already used by %q", key, namespace, owner))
+			continue
 		}
-		seenNamespaces[namespace] = projectKey
-		target := projectTarget{Namespace: namespace}
-		servingRaw := projectField(project, "serving")
-		if len(servingRaw) > 0 {
-			if len(strings.TrimSpace(string(servingRaw))) == 0 || strings.TrimSpace(string(servingRaw))[0] != '[' {
-				return nil, fmt.Errorf("project %q serving must be a string array", projectKey)
-			}
-			var serving []string
-			if err := json.Unmarshal(servingRaw, &serving); err != nil {
-				return nil, fmt.Errorf("project %q serving must be a string array", projectKey)
-			}
-			for _, value := range serving {
-				if strings.Contains(strings.ToLower(strings.TrimSpace(value)), keyword) {
-					target.CheckImages = true
-					break
-				}
-			}
+		owners[namespace] = key
+
+		serving := stringList(field(fields, "serving"))
+		projectType := strings.Join(stringList(field(fields, "type")), ",")
+		project := model.Project{
+			Key:         key,
+			Namespace:   namespace,
+			Type:        projectType,
+			Batch:       slices.ContainsFunc(serving, func(v string) bool { return strings.Contains(strings.ToLower(v), r.batchKeyword) }),
+			CustomServe: strings.EqualFold(strings.TrimSpace(projectType), r.customServeType),
 		}
-		targets = append(targets, target)
+		if project.Batch || project.CustomServe {
+			projects = append(projects, project)
+		}
 	}
-	sort.Slice(targets, func(i, j int) bool { return targets[i].Namespace < targets[j].Namespace })
-	return targets, nil
+	return projects, skipped
 }
 
-func projectField(project map[string]json.RawMessage, name string) json.RawMessage {
-	for key, value := range project {
+func field(fields map[string]json.RawMessage, name string) json.RawMessage {
+	for key, value := range fields {
 		if strings.EqualFold(key, name) {
 			return value
 		}
+	}
+	return nil
+}
+
+// stringList reads a JSON string or string array.
+func stringList(raw json.RawMessage) []string {
+	var list []string
+	if json.Unmarshal(raw, &list) == nil {
+		return list
+	}
+	var single string
+	if json.Unmarshal(raw, &single) == nil && single != "" {
+		return []string{single}
 	}
 	return nil
 }

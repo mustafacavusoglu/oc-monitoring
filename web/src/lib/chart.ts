@@ -1,11 +1,12 @@
 import type { BarRow } from '../components/charts/StackedBars'
 import type { Series } from '../components/charts/Legend'
 
-/** Categorical slots 1-3, fixed per type on every chart. */
+/** Categorical slots 1-4 (adjacent-validated order), fixed per type on every chart. */
 export const TYPE_SERIES: Series[] = [
   { key: 'llm', label: 'LLM', color: 'var(--series-llm)' },
   { key: 'ml', label: 'ML', color: 'var(--series-ml)' },
   { key: 'batch', label: 'Batch', color: 'var(--series-batch)' },
+  { key: 'custom', label: 'Custom Serve', color: 'var(--series-custom)' },
 ]
 
 export const HEALTH_SERIES: Series[] = [

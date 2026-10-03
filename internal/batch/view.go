@@ -3,7 +3,6 @@
 package batch
 
 import (
-	"fmt"
 	"sort"
 	"strings"
 	"time"
@@ -138,12 +137,7 @@ func workflowView(workflow *unstructured.Unstructured, pods []*unstructured.Unst
 	}
 	sort.Slice(pods, func(i, j int) bool { return pods[i].GetName() < pods[j].GetName() })
 	for _, pod := range pods {
-		view := model.Pod{Name: pod.GetName(), ContainerStates: containerStates(pod.Object)}
-		view.Phase, _, _ = unstructured.NestedString(pod.Object, "status", "phase")
-		if view.Phase == "" {
-			view.Phase = "Unknown"
-		}
-		run.Pods = append(run.Pods, view)
+		run.Pods = append(run.Pods, cluster.PodView(pod))
 	}
 	return run
 }
@@ -255,35 +249,4 @@ func uniqueSorted(values []string) []string {
 	}
 	sort.Strings(unique)
 	return unique
-}
-
-func containerStates(object map[string]any) []string {
-	var states []string
-	for _, field := range []string{"containerStatuses", "initContainerStatuses", "ephemeralContainerStatuses"} {
-		raw, _, _ := unstructured.NestedFieldNoCopy(object, "status", field)
-		items, _ := raw.([]any)
-		for _, item := range items {
-			status, ok := item.(map[string]any)
-			if !ok {
-				continue
-			}
-			name, _, _ := unstructured.NestedString(status, "name")
-			for _, stateName := range []string{"waiting", "running", "terminated"} {
-				detail, exists, _ := unstructured.NestedFieldNoCopy(status, "state", stateName)
-				if !exists {
-					continue
-				}
-				label := strings.ToUpper(stateName[:1]) + stateName[1:]
-				if detailMap, ok := detail.(map[string]any); ok {
-					if reason, _, _ := unstructured.NestedString(detailMap, "reason"); reason != "" {
-						label += " (" + reason + ")"
-					}
-				}
-				states = append(states, fmt.Sprintf("%s: %s", name, label))
-				break
-			}
-		}
-	}
-	sort.Strings(states)
-	return states
 }

@@ -1,4 +1,4 @@
-import type { CronWorkflow, Model, ModelType } from '../types'
+import type { CronWorkflow, Model, ModelType, Pod, Project } from '../types'
 
 export type Tone = 'good' | 'warning' | 'critical' | 'info' | 'neutral'
 
@@ -27,7 +27,7 @@ export function statusInfo(value?: string): StatusInfo {
   return STATUS[key] ?? { label: value || 'Bilinmiyor', tone: 'neutral' }
 }
 
-export const TYPE_LABELS: Record<ModelType | 'batch', string> = { llm: 'LLM', ml: 'ML', batch: 'Batch' }
+export const TYPE_LABELS: Record<ModelType | 'batch', string> = { llm: 'LLM', ml: 'ML', batch: 'Batch', custom: 'Custom Serve' }
 
 /** The CronWorkflow's current state: running, the last run's phase, or none. */
 export function batchPhase(workflow: CronWorkflow): string {
@@ -45,9 +45,24 @@ export function batchIssues(workflow: CronWorkflow): string[] {
   return issues
 }
 
+export const podHealthy = (pod: Pod) => pod.phase === 'Succeeded' || (pod.phase === 'Running' && pod.ready === pod.containers)
+
+export const unhealthyPods = (model: Model) => (model.pods ?? []).filter((pod) => !podHealthy(pod)).length
+
 export function modelIssues(model: Model): string[] {
-  if (model.state !== 'NotReady') return []
-  return [[model.reason, model.message].filter(Boolean).join(': ') || 'Hazır değil']
+  const issues: string[] = []
+  if (model.state === 'NotReady') issues.push([model.reason, model.message].filter(Boolean).join(': ') || 'Hazır değil')
+  const pods = unhealthyPods(model)
+  if (pods) issues.push(`${pods} pod hazır değil`)
+  return issues
+}
+
+/** What a monitored project is missing in the cluster, if anything. */
+export function projectGap(project: Project): string | undefined {
+  if (!project.namespaceExists) return 'Namespace yok'
+  if (project.batch && !project.cronWorkflows) return 'CronWorkflow yok'
+  if (project.customServe && !project.inferenceServices) return 'InferenceService yok'
+  return undefined
 }
 
 /** Health bucket used by the overview chart; tone doubles as the bucket key. */

@@ -33,26 +33,26 @@ func main() {
 
 	projectSource := projects.NewSource(cfg, nil)
 	res := cfg.Resources
-	// Batch resources are watched only in the namespaces selected from the
-	// project file; models are watched cluster-wide.
-	batchWatcher := cluster.NewWatcher("batch", clients,
-		[]schema.GroupVersionResource{res.CronWorkflows, res.Workflows, cluster.Pods},
-		func() []string { return projectSource.Snapshot().Namespaces })
-	modelWatcher := cluster.NewWatcher("models", clients,
-		[]schema.GroupVersionResource{res.InferenceServices, res.ServingRuntimes, res.LLMInferenceServices},
+	// Resources are watched cluster-wide with one informer each and filtered
+	// by project in memory; only pods are watched per project namespace.
+	clusterWatcher := cluster.NewWatcher("cluster", clients,
+		[]schema.GroupVersionResource{res.CronWorkflows, res.Workflows, res.InferenceServices, res.ServingRuntimes, res.LLMInferenceServices, cluster.Namespaces},
 		cluster.AllNamespaces)
+	podWatcher := cluster.NewWatcher("pods", clients,
+		[]schema.GroupVersionResource{cluster.Pods},
+		func() []string { return projectSource.Snapshot().WatchedNamespaces() })
 	imageChecker := registry.NewChecker(cfg.NexusManifestURLTemplate, cfg.ImageCacheTTL, cfg.RegistryCheckConcurrency, cfg.UpstreamTimeout)
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 	go projectSource.Run(ctx)
-	go batchWatcher.Run(ctx)
-	go modelWatcher.Run(ctx)
+	go clusterWatcher.Run(ctx)
+	go podWatcher.Run(ctx)
 
 	api := dashboard.NewHandler(dashboard.Sources{
 		Projects: projectSource.Snapshot,
-		Batch:    batchWatcher.Snapshot,
-		Models:   modelWatcher.Snapshot,
+		Cluster:  clusterWatcher.Snapshot,
+		Pods:     podWatcher.Snapshot,
 		Images:   imageChecker,
 	}, cfg)
 	server := &http.Server{

@@ -3,6 +3,7 @@ import { DataTable, NameCell, type Column } from '../components/DataTable'
 import { DetailList } from '../components/DetailList'
 import { KpiRow } from '../components/Kpi'
 import { Panel } from '../components/Panel'
+import { PodList } from '../components/PodList'
 import { SearchInput } from '../components/SearchInput'
 import { StatusBadge } from '../components/StatusBadge'
 import { Donut } from '../components/charts/Donut'
@@ -71,10 +72,7 @@ function WorkflowDetail({ workflow }: { workflow: CronWorkflow }) {
           ['Süre', formatDuration(run.startedAt, run.finishedAt)],
         ]} />
         <h4>Pod’lar ({run.pods.length})</h4>
-        {run.pods.length ? <ul className="item-list">{run.pods.map((pod) => <li key={pod.name}>
-          <div className="stack"><strong>{pod.name}</strong>{pod.containerStates?.length ? <small className="muted">{pod.containerStates.join(' · ')}</small> : null}</div>
-          <StatusBadge value={pod.phase} />
-        </li>)}</ul> : <p className="muted">Pod bulunamadı.</p>}
+        <PodList pods={run.pods} />
       </> : <p className="muted">Henüz workflow çalışmamış.</p>}
     </section>
     <section>

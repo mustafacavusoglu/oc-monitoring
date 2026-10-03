@@ -20,6 +20,7 @@
   --series-llm: #2a78d6;
   --series-ml: #eb6834;
   --series-batch: #1baf7a;
+  --series-custom: #eda100;
   /* Reserved status colors, always paired with an icon + label. */
   --good: #0ca30c;
   --warning: #fab219;
@@ -59,6 +60,7 @@
   --series-llm: #3987e5;
   --series-ml: #d95926;
   --series-batch: #199e70;
+  --series-custom: #c98500;
   --info: #3987e5;
   --neutral: #6b737d;
   --good-ink: #5fd35f;
@@ -142,7 +144,8 @@ nav { display: flex; flex-direction: column; gap: 2px; }
 .ns-menu { position: absolute; right: 0; top: calc(100% + 6px); z-index: 20; width: 280px; padding: 8px; border: 1px solid var(--border);
   border-radius: var(--radius); background: var(--surface); box-shadow: 0 10px 30px rgb(0 0 0 / 14%); }
 .ns-menu input { width: 100%; height: 34px; padding: 0 10px; border: 1px solid var(--border); border-radius: 6px; background: var(--surface-2); }
-.ns-options { max-height: 300px; overflow-y: auto; margin-top: 6px; display: flex; flex-direction: column; }
+.ns-count { display: block; margin: 8px 4px 2px; color: var(--muted); font-size: 11.5px; }
+.ns-options { max-height: min(60vh, 520px); overflow-y: auto; margin-top: 6px; display: flex; flex-direction: column; }
 .ns-options button { padding: 7px 10px; border: 0; border-radius: 6px; background: none; text-align: left; }
 .ns-options button:hover { background: var(--hover); }
 .ns-options button[aria-selected="true"] { color: var(--accent); font-weight: 600; }
@@ -190,6 +193,7 @@ nav { display: flex; flex-direction: column; gap: 2px; }
 .type-llm::before { background: var(--series-llm); }
 .type-ml::before { background: var(--series-ml); }
 .type-batch::before { background: var(--series-batch); }
+.type-custom::before { background: var(--series-custom); }
 
 /* Table */
 .table-wrap { overflow-x: auto; margin: 0 -18px -16px; border-top: 1px solid var(--border); }
@@ -217,6 +221,7 @@ td.empty { padding: 32px; text-align: center; color: var(--muted); }
 
 /* Expanded detail */
 .detail-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 20px; }
+.detail-grid-2 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 .detail-grid h3 { font-size: 13px; margin-bottom: 8px; }
 .detail-grid h4 { font-size: 12px; margin: 12px 0 6px; color: var(--text-2); }
 .detail-list { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 10px 20px; margin: 0; }

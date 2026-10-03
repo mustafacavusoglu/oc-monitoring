@@ -3,7 +3,7 @@
  * imports this file, so it never reaches the production bundle. Output is
  * deterministic (seeded) and timestamps are relative to `now`.
  */
-import type { CronWorkflow, DashboardResponse, Model, RunSummary } from '../types.ts'
+import type { CronWorkflow, DashboardResponse, Model, Pod, Project, RunSummary } from '../types.ts'
 
 const MINUTE = 60_000
 const HOUR = 60 * MINUTE
@@ -172,9 +172,9 @@ function buildCronWorkflow([namespace, name, schedule]: (typeof BATCH_SEEDS)[num
       scheduledAt: latest.startedAt,
       createdAt: latest.startedAt,
       pods: [
-        { name: `${latest.name}-hazirlik`, phase: 'Succeeded', containerStates: ['main: Terminated (Completed)'] },
+        { name: `${latest.name}-hazirlik`, phase: 'Succeeded', ready: 0, containers: 1, restarts: 0, containerStates: ['main: Terminated (Completed)'] },
         {
-          name: `${latest.name}-skorlama`, phase: podPhase,
+          name: `${latest.name}-skorlama`, phase: podPhase, ready: podPhase === 'Running' ? 1 : 0, containers: 1, restarts: 0,
           containerStates: [podPhase === 'Running' ? 'main: Running' : podPhase === 'Failed' ? 'main: Terminated (Error)' : 'main: Terminated (Completed)'],
         },
       ],
@@ -189,6 +189,38 @@ function buildCronWorkflow([namespace, name, schedule]: (typeof BATCH_SEEDS)[num
   }
 }
 
+const CUSTOM_SEEDS: ModelSeed[] = [
+  ['kampanya-oneri', 'kampanya-skor-api', 'custom-fastapi-runtime', 'sklearn', 0, [2, 4]],
+  ['kampanya-oneri', 'segment-api', 'custom-fastapi-runtime', 'sklearn', 0, [1, 2], 'NotReady', 'MinimumReplicasUnavailable', 'Deployment does not have minimum availability'],
+  ['adres-eslestirme', 'adres-normalize', 'custom-torchserve', 'pytorch', 1, [1, 2]],
+  ['dolandiricilik-kural', 'kural-motoru', 'custom-java-runtime', 'pmml', 0, [2, 2]],
+]
+
+/** Projects not represented by any resource above: one without a namespace, one empty. */
+const EMPTY_PROJECTS: Project[] = [
+  { key: 'ESKI_KAMPANYA', namespace: 'eski-kampanya', batch: true, customServe: false, namespaceExists: false, cronWorkflows: 0, inferenceServices: 0, pods: 0 },
+  { key: 'YENI_SKOR_MODEL', namespace: 'yeni-skor-model', batch: true, customServe: false, namespaceExists: true, cronWorkflows: 0, inferenceServices: 0, pods: 0 },
+  { key: 'BELGE_SINIFLANDIRMA', namespace: 'belge-siniflandirma', batch: false, customServe: true, namespaceExists: true, cronWorkflows: 0, inferenceServices: 0, pods: 0 },
+]
+
+function customPods(model: Model, index: number, now: number): Pod[] {
+  return Array.from({ length: model.minReplicas || 1 }, (_, replica) => {
+    const crashing = model.state === 'NotReady' && replica === 0
+    return {
+      name: `${model.name}-predictor-${(index * 7 + replica).toString(36)}x${replica}`,
+      phase: 'Running',
+      ready: crashing ? 1 : 2,
+      containers: 2,
+      restarts: crashing ? 14 : replica,
+      node: `worker-${(index + replica) % 6 + 1}`,
+      startedAt: iso(now - (index + 1) * 5 * HOUR),
+      containerStates: crashing
+        ? ['kserve-container: Waiting (CrashLoopBackOff)', 'queue-proxy: Running']
+        : ['kserve-container: Running', 'queue-proxy: Running'],
+    }
+  })
+}
+
 export function createDemoDashboard(date: Date): DashboardResponse {
   const now = date.getTime()
   const random = seeded(42)
@@ -196,15 +228,34 @@ export function createDemoDashboard(date: Date): DashboardResponse {
     ...LLM_SEEDS.map((seed, i) => buildModel(seed, 'llm', i, now)),
     ...LLMISVC_SEEDS.map((seed, i) => buildModel(seed, 'llm', i + LLM_SEEDS.length, now)),
     ...ML_SEEDS.map((seed, i) => buildModel(seed, 'ml', i, now)),
+    ...CUSTOM_SEEDS.map((seed, i) => {
+      const model = { ...buildModel(seed, 'custom', i, now), image: `repomaster.company.com/mlops/${seed[2]}:1.${i}` }
+      return { ...model, pods: customPods(model, i, now) }
+    }),
   ].sort((a, b) => a.namespace.localeCompare(b.namespace) || a.name.localeCompare(b.name))
   const cronWorkflows = BATCH_SEEDS.map((seed, i) => buildCronWorkflow(seed, i, random, now))
   const ok = { state: 'ready', lastSuccess: iso(now - 40_000) }
+  const projects: Project[] = [
+    ...[...new Set(cronWorkflows.map((w) => w.namespace))].map((namespace) => ({
+      key: namespace.toUpperCase().replaceAll('-', '_'), namespace, batch: true, customServe: false, namespaceExists: true,
+      cronWorkflows: cronWorkflows.filter((w) => w.namespace === namespace).length, inferenceServices: 0, pods: 2,
+    })),
+    ...[...new Set(models.filter((m) => m.type === 'custom').map((m) => m.namespace))].map((namespace) => {
+      const own = models.filter((m) => m.namespace === namespace)
+      return {
+        key: namespace.toUpperCase().replaceAll('-', '_'), namespace, type: 'CustomServe', batch: false, customServe: true, namespaceExists: true,
+        cronWorkflows: 0, inferenceServices: own.length, pods: own.reduce((sum, m) => sum + (m.pods?.length ?? 0), 0),
+      }
+    }),
+    ...EMPTY_PROJECTS,
+  ].sort((a, b) => a.key.localeCompare(b.key))
 
   return {
     generatedAt: iso(now),
     refreshIntervalSeconds: 30,
-    sources: { projects: ok, batch: ok, models: ok, registry: { ...ok, lastSuccess: iso(now - 13 * MINUTE) } },
-    namespaces: [...new Set([...models, ...cronWorkflows].map((item) => item.namespace))].sort(),
+    sources: { projects: ok, cluster: ok, pods: ok, registry: { ...ok, lastSuccess: iso(now - 13 * MINUTE) } },
+    namespaces: [...new Set([...models, ...cronWorkflows, ...projects].map((item) => item.namespace))].sort(),
+    projects,
     models,
     cronWorkflows,
   }

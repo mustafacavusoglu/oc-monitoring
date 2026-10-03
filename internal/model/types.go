@@ -27,8 +27,9 @@ const (
 
 // Model types.
 const (
-	TypeLLM = "llm"
-	TypeML  = "ml"
+	TypeLLM         = "llm"
+	TypeML          = "ml"
+	TypeCustomServe = "custom"
 )
 
 type ImageResult struct {
@@ -41,9 +42,14 @@ type ImageResult struct {
 }
 
 type Pod struct {
-	Name            string   `json:"name"`
-	Phase           string   `json:"phase"`
-	ContainerStates []string `json:"containerStates,omitempty"`
+	Name            string     `json:"name"`
+	Phase           string     `json:"phase"`
+	Ready           int        `json:"ready"` // ready containers
+	Containers      int        `json:"containers"`
+	Restarts        int64      `json:"restarts"`
+	Node            string     `json:"node,omitempty"`
+	StartedAt       *time.Time `json:"startedAt,omitempty"`
+	ContainerStates []string   `json:"containerStates,omitempty"`
 }
 
 type RunSummary struct {
@@ -94,9 +100,11 @@ type Model struct {
 	MaxReplicas *int64 `json:"maxReplicas,omitempty"`
 	GPU         int64  `json:"gpu"`
 	// MIG holds MIG slices per profile (e.g. "1g.5gb": 2), per replica.
-	MIG        map[string]int64 `json:"mig,omitempty"`
-	CreatedAt  *time.Time       `json:"createdAt,omitempty"`
-	StateSince *time.Time       `json:"stateSince,omitempty"`
+	MIG map[string]int64 `json:"mig,omitempty"`
+	// Pods of a Custom Serve model (label serving.kserve.io/inferenceservice).
+	Pods       []Pod      `json:"pods,omitempty"`
+	CreatedAt  *time.Time `json:"createdAt,omitempty"`
+	StateSince *time.Time `json:"stateSince,omitempty"`
 }
 
 type SourceHealth struct {
@@ -107,9 +115,24 @@ type SourceHealth struct {
 
 type Sources struct {
 	Projects SourceHealth `json:"projects"`
-	Batch    SourceHealth `json:"batch"`
-	Models   SourceHealth `json:"models"`
+	Cluster  SourceHealth `json:"cluster"`
+	Pods     SourceHealth `json:"pods"`
 	Registry SourceHealth `json:"registry"`
+}
+
+// Project is a batch and/or Custom Serve project from the project JSON, with
+// what the cluster actually holds for it so gaps are visible.
+type Project struct {
+	Key         string `json:"key"`
+	Namespace   string `json:"namespace"`
+	Type        string `json:"type,omitempty"`
+	Batch       bool   `json:"batch"`
+	CustomServe bool   `json:"customServe"`
+
+	NamespaceExists   bool `json:"namespaceExists"`
+	CronWorkflows     int  `json:"cronWorkflows"`
+	InferenceServices int  `json:"inferenceServices"`
+	Pods              int  `json:"pods"`
 }
 
 type DashboardResponse struct {
@@ -117,6 +140,7 @@ type DashboardResponse struct {
 	RefreshIntervalSeconds int            `json:"refreshIntervalSeconds"`
 	Sources                Sources        `json:"sources"`
 	Namespaces             []string       `json:"namespaces"`
+	Projects               []Project      `json:"projects"`
 	Models                 []Model        `json:"models"`
 	CronWorkflows          []CronWorkflow `json:"cronWorkflows"`
 }

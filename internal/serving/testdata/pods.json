@@ -1,0 +1,22 @@
+[
+  {
+    "apiVersion": "v1",
+    "kind": "Pod",
+    "metadata": { "name": "fraud-xgb-predictor-abc", "namespace": "fraud", "labels": { "serving.kserve.io/inferenceservice": "fraud-xgb" } },
+    "spec": { "nodeName": "worker-1" },
+    "status": {
+      "phase": "Running",
+      "startTime": "2026-10-01T08:00:00Z",
+      "containerStatuses": [
+        { "name": "kserve-container", "ready": false, "restartCount": 7, "state": { "waiting": { "reason": "CrashLoopBackOff" } } },
+        { "name": "queue-proxy", "ready": true, "restartCount": 0, "state": { "running": {} } }
+      ]
+    }
+  },
+  {
+    "apiVersion": "v1",
+    "kind": "Pod",
+    "metadata": { "name": "unrelated", "namespace": "fraud" },
+    "status": { "phase": "Running" }
+  }
+]

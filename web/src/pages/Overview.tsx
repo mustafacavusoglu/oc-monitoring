@@ -9,7 +9,7 @@ import { TYPE_LABELS, batchIssues, batchTone, modelIssues, modelTone } from '../
 import type { Page } from '../lib/useRoute'
 import type { CronWorkflow, Model } from '../types'
 
-type Kind = 'llm' | 'ml' | 'batch'
+type Kind = 'llm' | 'ml' | 'custom' | 'batch'
 type Item = { kind: Kind; namespace: string; name: string; tone: string; issues: string[]; since?: string }
 
 const NAMESPACE_ROWS = 10
@@ -32,10 +32,10 @@ export function Overview({ models, cronWorkflows, onNavigate }: { models: Model[
 
   const attention = items.filter((item) => item.issues.length)
   const byKind = (kind: Kind) => items.filter((item) => item.kind === kind)
-  const kpis: KpiItem[] = (['llm', 'ml', 'batch'] as const).map((kind) => {
+  const kpis: KpiItem[] = (['llm', 'ml', 'custom', 'batch'] as const).map((kind) => {
     const all = byKind(kind)
     const problems = all.filter((item) => item.issues.length).length
-    return { key: kind, label: kind === 'batch' ? 'Batch işleri' : `${TYPE_LABELS[kind]} modelleri`, value: all.length, sub: problems ? `${problems} sorunlu` : 'Sorun yok' }
+    return { key: kind, label: kind === 'batch' ? 'Batch işleri' : kind === 'custom' ? 'Custom Serve' : `${TYPE_LABELS[kind]} modelleri`, value: all.length, sub: problems ? `${problems} sorunlu` : 'Sorun yok' }
   })
   kpis.push({ key: 'attention', label: 'Dikkat gerektiren', value: attention.length, sub: 'Tüm türlerde', tone: 'critical' })
 

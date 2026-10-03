@@ -25,7 +25,9 @@ type Config struct {
 	AzureTokenFile    string // optional, from Secret mount
 	// BatchServingKeyword selects project namespaces whose `serving` list
 	// contains this value (case-insensitive substring).
-	BatchServingKeyword    string
+	BatchServingKeyword string
+	// CustomServeType selects projects whose `type` field equals this value.
+	CustomServeType        string
 	ProjectRefreshInterval time.Duration
 
 	// NexusManifestURLTemplate contains {namespace} and {imageId} placeholders.
@@ -70,6 +72,7 @@ func Load() (Config, error) {
 		AzureToken:               strings.TrimSpace(os.Getenv("AZURE_TOKEN")),
 		AzureTokenFile:           strings.TrimSpace(os.Getenv("AZURE_TOKEN_FILE")),
 		BatchServingKeyword:      e.str("BATCH_SERVING_KEYWORD"),
+		CustomServeType:          e.str("CUSTOM_SERVE_TYPE"),
 		ProjectRefreshInterval:   e.duration("PROJECT_REFRESH_INTERVAL"),
 		NexusManifestURLTemplate: e.str("NEXUS_MANIFEST_URL_TEMPLATE"),
 		ImageCacheTTL:            e.duration("IMAGE_CACHE_TTL"),

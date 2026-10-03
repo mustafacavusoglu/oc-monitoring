@@ -10,6 +10,11 @@ export type ImageResult = {
 export type Pod = {
   name: string
   phase: string
+  ready: number
+  containers: number
+  restarts: number
+  node?: string
+  startedAt?: string
   containerStates?: string[]
 }
 
@@ -41,7 +46,7 @@ export type CronWorkflow = {
   images: ImageResult[]
 }
 
-export type ModelType = 'llm' | 'ml'
+export type ModelType = 'llm' | 'ml' | 'custom'
 
 export type Model = {
   namespace: string
@@ -61,6 +66,8 @@ export type Model = {
   gpu: number
   /** MIG slices per profile (e.g. "1g.5gb": 2), per replica. */
   mig?: Record<string, number>
+  /** Custom Serve models only. */
+  pods?: Pod[]
   createdAt?: string
   stateSince?: string
 }
@@ -73,9 +80,22 @@ export type SourceHealth = {
 
 export type Sources = {
   projects: SourceHealth
-  batch: SourceHealth
-  models: SourceHealth
+  cluster: SourceHealth
+  pods: SourceHealth
   registry: SourceHealth
+}
+
+/** A project from the project JSON and what the cluster holds for it. */
+export type Project = {
+  key: string
+  namespace: string
+  type?: string
+  batch: boolean
+  customServe: boolean
+  namespaceExists: boolean
+  cronWorkflows: number
+  inferenceServices: number
+  pods: number
 }
 
 export type DashboardResponse = {
@@ -83,6 +103,7 @@ export type DashboardResponse = {
   refreshIntervalSeconds: number
   sources: Sources
   namespaces: string[]
+  projects: Project[]
   models: Model[]
   cronWorkflows: CronWorkflow[]
 }

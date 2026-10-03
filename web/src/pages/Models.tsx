@@ -1,17 +1,18 @@
 import { useMemo, useState } from 'react'
 import { DataTable, NameCell, type Column } from '../components/DataTable'
 import { DetailList } from '../components/DetailList'
-import { KpiRow } from '../components/Kpi'
+import { KpiRow, type KpiItem } from '../components/Kpi'
 import { Panel } from '../components/Panel'
+import { PodList } from '../components/PodList'
 import { SearchInput } from '../components/SearchInput'
 import { StatusBadge } from '../components/StatusBadge'
 import { StackedBars } from '../components/charts/StackedBars'
 import { HEALTH_SERIES, TYPE_SERIES, groupRows } from '../lib/chart'
 import { formatDateTime, formatRelative, matchesQuery } from '../lib/format'
-import { acceleratorLabel, allocatedGpu, allocatedMig, modelTone, usesAccelerator } from '../lib/status'
+import { acceleratorLabel, allocatedGpu, allocatedMig, modelTone, unhealthyPods, usesAccelerator } from '../lib/status'
 import type { Model, ModelType } from '../types'
 
-type Filter = 'all' | 'Ready' | 'NotReady' | 'gpu'
+type Filter = 'all' | 'Ready' | 'NotReady' | 'gpu' | 'pods'
 
 const NAMESPACE_ROWS = 8
 
@@ -20,11 +21,25 @@ const FILTERS: Record<Filter, (model: Model) => boolean> = {
   Ready: (model) => model.state === 'Ready',
   NotReady: (model) => model.state !== 'Ready',
   gpu: usesAccelerator,
+  pods: (model) => unhealthyPods(model) > 0,
 }
 
 const replicas = (model: Model) =>
   model.minReplicas === undefined && model.maxReplicas === undefined ? '—'
     : model.minReplicas === model.maxReplicas ? String(model.minReplicas) : `${model.minReplicas ?? 1}–${model.maxReplicas ?? '∞'}`
+
+const podsColumn: Column<Model> = {
+  key: 'pods', header: 'Pod’lar', sortValue: (m) => unhealthyPods(m) * 1000 + (m.pods?.length ?? 0),
+  render: (m) => {
+    const pods = m.pods ?? []
+    const restarts = pods.reduce((sum, pod) => sum + pod.restarts, 0)
+    const bad = unhealthyPods(m)
+    return <div className="stack">
+      <span className={`badge tone-${!pods.length ? 'neutral' : bad ? 'critical' : 'good'}`}>{pods.length - bad}/{pods.length} hazır</span>
+      {restarts ? <small className="muted">{restarts} restart</small> : null}
+    </div>
+  },
+}
 
 const columns: Column<Model>[] = [
   { key: 'name', header: 'Model', render: (m) => <NameCell name={m.name} namespace={m.namespace} />, sortValue: (m) => m.name },
@@ -40,7 +55,7 @@ const columns: Column<Model>[] = [
 ]
 
 function ModelDetail({ model }: { model: Model }) {
-  return <DetailList items={[
+  const details = <DetailList items={[
     ['Kaynak türü', model.kind],
     ['Runtime', model.runtime],
     ['Runtime image', model.image && <code>{model.image}</code>],
@@ -52,6 +67,11 @@ function ModelDetail({ model }: { model: Model }) {
     ['Durum değişimi', model.stateSince && formatDateTime(model.stateSince)],
     ['Mesaj', model.message && <span className="issue">{model.message}</span>],
   ]} />
+  if (!model.pods) return details
+  return <div className="detail-grid detail-grid-2">
+    <section><h3>Model</h3>{details}</section>
+    <section><h3>Pod’lar ({model.pods.length})</h3><PodList pods={model.pods} /></section>
+  </div>
 }
 
 export function Models({ type, models }: { type: ModelType; models: Model[] }) {
@@ -63,11 +83,13 @@ export function Models({ type, models }: { type: ModelType; models: Model[] }) {
   const gpus = models.reduce((sum, model) => sum + allocatedGpu(model), 0)
   const migSlices = useMemo(() => models.flatMap((m) => allocatedMig(m).map((slice) => ({ ...slice, namespace: m.namespace }))), [models])
   const migTotal = migSlices.reduce((sum, slice) => sum + slice.count, 0)
-  const kpis = [
+  const kpis: KpiItem[] = [
     { key: 'all', label: 'Toplam model', value: models.length },
     { key: 'Ready', label: 'Hazır', value: ready, tone: 'good' as const },
     { key: 'NotReady', label: 'Hazır değil', value: models.length - ready, tone: 'critical' as const },
-    { key: 'gpu', label: 'Ayrılan GPU', value: gpus, sub: migTotal ? `+ ${migTotal} MIG dilimi` : 'min. replika × GPU' },
+    type === 'custom'
+      ? { key: 'pods', label: 'Sorunlu pod’u olan', value: models.filter(FILTERS.pods).length, sub: 'Hazır olmayan pod', tone: 'critical' }
+      : { key: 'gpu', label: 'Ayrılan GPU', value: gpus, sub: migTotal ? `+ ${migTotal} MIG dilimi` : 'min. replika × GPU' },
   ]
 
   const healthRows = useMemo(() => groupRows(models, (m) => m.namespace, modelTone, NAMESPACE_ROWS), [models])
@@ -92,7 +114,7 @@ export function Models({ type, models }: { type: ModelType; models: Model[] }) {
     </div>
     <Panel title="Modeller" subtitle={`${visible.length} / ${models.length} model`}
       actions={<SearchInput value={query} onChange={setQuery} placeholder="Model, namespace, runtime ara" />}>
-      <DataTable rows={visible} columns={columns} rowKey={(m) => `${m.kind}/${m.namespace}/${m.name}`} detail={(m) => <ModelDetail model={m} />}
+      <DataTable rows={visible} columns={type === 'custom' ? [...columns.slice(0, 3), podsColumn, ...columns.slice(3)] : columns} rowKey={(m) => `${m.kind}/${m.namespace}/${m.name}`} detail={(m) => <ModelDetail model={m} />}
         empty="Bu filtrelerle eşleşen model yok." initialSort={{ key: 'state', direction: 1 }} />
     </Panel>
   </div>

@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
 	"testing"
 	"time"
 
@@ -49,6 +50,10 @@ func object(apiVersion, kind, namespace, name string, spec map[string]any) *unst
 	}}
 }
 
+func namespace(name string) *unstructured.Unstructured {
+	return &unstructured.Unstructured{Object: map[string]any{"metadata": map[string]any{"name": name}}}
+}
+
 func TestDashboardEndpointCombinesBatchAndModels(t *testing.T) {
 	cron := object("argoproj.io/v1alpha1", "CronWorkflow", "payments", "daily-job", map[string]any{
 		"schedule": "0 12 * * *",
@@ -56,6 +61,8 @@ func TestDashboardEndpointCombinesBatchAndModels(t *testing.T) {
 			map[string]any{"name": "run", "container": map[string]any{"image": "registry.example.test/payments/app:v1"}},
 		}},
 	})
+	otherTeam := cron.DeepCopy()
+	otherTeam.SetNamespace("other-team")
 	runtime := object("serving.kserve.io/v1alpha1", "ServingRuntime", "chatbot", "vllm", map[string]any{
 		"containers": []any{map[string]any{"image": "quay.io/vllm/vllm-openai:0.6"}},
 	})
@@ -63,15 +70,20 @@ func TestDashboardEndpointCombinesBatchAndModels(t *testing.T) {
 		"predictor": map[string]any{"model": map[string]any{"runtime": "vllm"}},
 	})
 	api := NewHandler(Sources{
-		Projects: func() projects.Snapshot { return projects.Snapshot{Namespaces: []string{"payments"}} },
-		Batch: func() cluster.Snapshot {
-			return cluster.Snapshot{Objects: map[schema.GroupVersionResource][]*unstructured.Unstructured{resources.CronWorkflows: {cron}}, Health: model.SourceHealth{State: model.StateReady}}
+		Projects: func() projects.Snapshot {
+			return projects.Snapshot{Projects: []model.Project{
+				{Key: "PAYMENTS", Namespace: "payments", Batch: true},
+				{Key: "GHOST", Namespace: "ghost", Batch: true},
+			}}
 		},
-		Models: func() cluster.Snapshot {
+		Cluster: func() cluster.Snapshot {
 			return cluster.Snapshot{Objects: map[schema.GroupVersionResource][]*unstructured.Unstructured{
+				resources.CronWorkflows:   {cron, otherTeam},
 				resources.ServingRuntimes: {runtime}, resources.InferenceServices: {isvc},
+				cluster.Namespaces: {namespace("payments"), namespace("chatbot"), namespace("other-team")},
 			}, Health: model.SourceHealth{State: model.StateReady}}
 		},
+		Pods:   func() cluster.Snapshot { return cluster.Snapshot{Health: model.SourceHealth{State: model.StateReady}} },
 		Images: fakeImages{t},
 	}, config.Config{
 		Resources:         resources,
@@ -104,7 +116,15 @@ func TestDashboardEndpointCombinesBatchAndModels(t *testing.T) {
 	if len(response.Models) != 1 || response.Models[0].Type != model.TypeLLM || response.Models[0].Name != "llama" {
 		t.Fatalf("models = %#v", response.Models)
 	}
-	if want := []string{"chatbot", "payments"}; len(response.Namespaces) != 2 || response.Namespaces[0] != want[0] || response.Namespaces[1] != want[1] {
+	if want := []string{"chatbot", "ghost", "payments"}; !reflect.DeepEqual(response.Namespaces, want) {
 		t.Fatalf("namespaces = %v, want %v", response.Namespaces, want)
+	}
+	// Coverage shows the project without a namespace instead of hiding it.
+	want := []model.Project{
+		{Key: "PAYMENTS", Namespace: "payments", Batch: true, NamespaceExists: true, CronWorkflows: 1},
+		{Key: "GHOST", Namespace: "ghost", Batch: true},
+	}
+	if !reflect.DeepEqual(response.Projects, want) {
+		t.Fatalf("projects = %+v, want %+v", response.Projects, want)
 	}
 }

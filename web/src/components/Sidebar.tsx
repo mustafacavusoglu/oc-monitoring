@@ -7,9 +7,9 @@ import { Icon, type IconName } from './Icon'
 export type NavItem = { page: Page; label: string; icon: IconName; count?: number; alerts?: number }
 
 export const SOURCE_LABELS: Record<keyof Sources, string> = {
-  models: 'Model kaynakları',
-  batch: 'Batch kaynakları',
   projects: 'Proje listesi',
+  cluster: 'Kubernetes kaynakları',
+  pods: 'Pod’lar',
   registry: 'Nexus registry',
 }
 

@@ -3,7 +3,9 @@
 // An LLMInferenceService is always an LLM. An InferenceService is classified
 // by the images of the ServingRuntime it names: a configured LLM keyword
 // (e.g. vllm) makes it an LLM, a configured ML keyword (e.g. triton) an ML
-// model; anything else is not shown.
+// model; anything else is not shown. In a Custom Serve project namespace
+// every model is a Custom Serve model, whatever its runtime, and carries its
+// pods.
 package serving
 
 import (
@@ -19,20 +21,44 @@ import (
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 )
 
-func BuildModels(inferenceServices, servingRuntimes, llmInferenceServices []*unstructured.Unstructured, rules config.ServingRules) []model.Model {
+const inferenceServiceLabel = "serving.kserve.io/inferenceservice"
+
+func BuildModels(inferenceServices, servingRuntimes, llmInferenceServices, pods []*unstructured.Unstructured, customServe map[string]bool, rules config.ServingRules) []model.Model {
 	runtimes := make(map[string][]string, len(servingRuntimes))
 	for _, runtime := range servingRuntimes {
 		runtimes[cluster.Key(runtime.GetNamespace(), runtime.GetName())] = containerImages(runtime.Object, "spec", "containers")
 	}
+	podsByModel := make(map[string][]*unstructured.Unstructured)
+	for _, pod := range pods {
+		if owner := pod.GetLabels()[inferenceServiceLabel]; owner != "" {
+			key := cluster.Key(pod.GetNamespace(), owner)
+			podsByModel[key] = append(podsByModel[key], pod)
+		}
+	}
 
 	models := make([]model.Model, 0, len(inferenceServices)+len(llmInferenceServices))
 	for _, isvc := range inferenceServices {
-		if m, ok := inferenceServiceModel(isvc, runtimes, rules); ok {
-			models = append(models, m)
+		runtimeName, _, _ := unstructured.NestedString(isvc.Object, "spec", "predictor", "model", "runtime")
+		images := runtimes[cluster.Key(isvc.GetNamespace(), runtimeName)]
+		modelType := classify(images, rules)
+		if customServe[isvc.GetNamespace()] {
+			modelType = model.TypeCustomServe
 		}
+		if modelType == "" {
+			continue
+		}
+		m := inferenceServiceModel(isvc, modelType, runtimeName, images, rules)
+		if modelType == model.TypeCustomServe {
+			m.Pods = podViews(podsByModel[cluster.Key(m.Namespace, m.Name)])
+		}
+		models = append(models, m)
 	}
 	for _, llmisvc := range llmInferenceServices {
-		models = append(models, llmInferenceServiceModel(llmisvc, rules))
+		m := llmInferenceServiceModel(llmisvc, rules)
+		if customServe[m.Namespace] {
+			m.Type = model.TypeCustomServe
+		}
+		models = append(models, m)
 	}
 	sort.Slice(models, func(i, j int) bool {
 		if models[i].Namespace == models[j].Namespace {
@@ -43,13 +69,16 @@ func BuildModels(inferenceServices, servingRuntimes, llmInferenceServices []*uns
 	return models
 }
 
-func inferenceServiceModel(isvc *unstructured.Unstructured, runtimes map[string][]string, rules config.ServingRules) (model.Model, bool) {
-	runtimeName, _, _ := unstructured.NestedString(isvc.Object, "spec", "predictor", "model", "runtime")
-	images := runtimes[cluster.Key(isvc.GetNamespace(), runtimeName)]
-	modelType := classify(images, rules)
-	if modelType == "" {
-		return model.Model{}, false
+func podViews(pods []*unstructured.Unstructured) []model.Pod {
+	views := make([]model.Pod, 0, len(pods))
+	for _, pod := range pods {
+		views = append(views, cluster.PodView(pod))
 	}
+	sort.Slice(views, func(i, j int) bool { return views[i].Name < views[j].Name })
+	return views
+}
+
+func inferenceServiceModel(isvc *unstructured.Unstructured, modelType, runtimeName string, images []string, rules config.ServingRules) model.Model {
 	m := baseModel(isvc, modelType)
 	m.Runtime = runtimeName
 	m.Image = first(images)
@@ -58,7 +87,7 @@ func inferenceServiceModel(isvc *unstructured.Unstructured, runtimes map[string]
 	m.MinReplicas = cluster.NestedInt(isvc.Object, "spec", "predictor", "minReplicas")
 	m.MaxReplicas = cluster.NestedInt(isvc.Object, "spec", "predictor", "maxReplicas")
 	addAccelerators(&m, isvc.Object, rules, "spec", "predictor", "model", "resources")
-	return m, true
+	return m
 }
 
 func llmInferenceServiceModel(llmisvc *unstructured.Unstructured, rules config.ServingRules) model.Model {

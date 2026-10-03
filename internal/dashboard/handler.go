@@ -5,6 +5,7 @@ import (
 	"compress/gzip"
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"log"
 	"net/http"
@@ -18,14 +19,17 @@ import (
 	"monitor/internal/model"
 	"monitor/internal/projects"
 	"monitor/internal/serving"
+
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+	"k8s.io/apimachinery/pkg/runtime/schema"
 )
 
 // Sources are the read-only views the handler combines. Every call is served
 // from in-memory caches, so a request never waits on Kubernetes, Azure or Nexus.
 type Sources struct {
 	Projects func() projects.Snapshot
-	Batch    func() cluster.Snapshot
-	Models   func() cluster.Snapshot
+	Cluster  func() cluster.Snapshot // cluster-wide resources
+	Pods     func() cluster.Snapshot // pods of the watched project namespaces
 	Images   batch.ImageChecker
 }
 
@@ -65,26 +69,33 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 func (h *Handler) snapshot(ctx context.Context, now time.Time) model.DashboardResponse {
 	projectSnapshot := h.sources.Projects()
-	batchSnapshot := h.sources.Batch()
-	modelSnapshot := h.sources.Models()
+	clusterSnapshot := h.sources.Cluster()
+	podSnapshot := h.sources.Pods()
+	objects, pods := clusterSnapshot.Objects, podSnapshot.Objects[cluster.Pods]
 	res := h.cfg.Resources
+	batchNamespaces := toSet(projectSnapshot.BatchNamespaces())
 
 	cronWorkflows := batch.BuildViews(
-		batchSnapshot.Objects[res.CronWorkflows],
-		batchSnapshot.Objects[res.Workflows],
-		batchSnapshot.Objects[cluster.Pods],
+		inNamespaces(objects[res.CronWorkflows], batchNamespaces),
+		inNamespaces(objects[res.Workflows], batchNamespaces),
+		pods,
 		now,
 	)
 	models := serving.BuildModels(
-		modelSnapshot.Objects[res.InferenceServices],
-		modelSnapshot.Objects[res.ServingRuntimes],
-		modelSnapshot.Objects[res.LLMInferenceServices],
+		objects[res.InferenceServices],
+		objects[res.ServingRuntimes],
+		objects[res.LLMInferenceServices],
+		pods,
+		toSet(projectSnapshot.CustomServeNamespaces()),
 		h.cfg.Serving,
 	)
 
 	projectHealth := model.SourceHealth{State: model.StateReady, LastSuccess: projectSnapshot.LastSuccess}
-	if projectSnapshot.Stale {
+	switch {
+	case projectSnapshot.Stale:
 		projectHealth.State, projectHealth.Error = model.StateDegraded, projectSnapshot.Error
+	case len(projectSnapshot.Skipped) > 0:
+		projectHealth.Error = fmt.Sprintf("%d project entries skipped: %s", len(projectSnapshot.Skipped), strings.Join(projectSnapshot.Skipped, "; "))
 	}
 
 	return model.DashboardResponse{
@@ -92,21 +103,67 @@ func (h *Handler) snapshot(ctx context.Context, now time.Time) model.DashboardRe
 		RefreshIntervalSeconds: int(h.cfg.UIRefreshInterval.Seconds()),
 		Sources: model.Sources{
 			Projects: projectHealth,
-			Batch:    batchSnapshot.Health,
-			Models:   modelSnapshot.Health,
+			Cluster:  clusterSnapshot.Health,
+			Pods:     podSnapshot.Health,
 			Registry: batch.ResolveImages(ctx, cronWorkflows, h.sources.Images),
 		},
-		Namespaces:    namespaces(projectSnapshot.Namespaces, models),
+		Namespaces:    namespaces(projectSnapshot.WatchedNamespaces(), models),
+		Projects:      coverage(projectSnapshot.Projects, objects, res, pods),
 		Models:        models,
 		CronWorkflows: cronWorkflows,
 	}
 }
 
-// namespaces lists every namespace the UI can filter by: watched batch
+// coverage adds to every project what the cluster holds in its namespace, so
+// a project with no resources (or no namespace) is visible.
+func coverage(source []model.Project, objects map[schema.GroupVersionResource][]*unstructured.Unstructured, res config.Resources, pods []*unstructured.Unstructured) []model.Project {
+	count := func(items []*unstructured.Unstructured) map[string]int {
+		counts := make(map[string]int)
+		for _, item := range items {
+			counts[item.GetNamespace()]++
+		}
+		return counts
+	}
+	existing := make(map[string]bool)
+	for _, namespace := range objects[cluster.Namespaces] {
+		existing[namespace.GetName()] = true
+	}
+	cronWorkflows, inferenceServices, podCounts := count(objects[res.CronWorkflows]), count(objects[res.InferenceServices]), count(pods)
+
+	result := make([]model.Project, 0, len(source))
+	for _, project := range source {
+		project.NamespaceExists = existing[project.Namespace]
+		project.CronWorkflows = cronWorkflows[project.Namespace]
+		project.InferenceServices = inferenceServices[project.Namespace]
+		project.Pods = podCounts[project.Namespace]
+		result = append(result, project)
+	}
+	return result
+}
+
+func toSet(values []string) map[string]bool {
+	set := make(map[string]bool, len(values))
+	for _, value := range values {
+		set[value] = true
+	}
+	return set
+}
+
+func inNamespaces(objects []*unstructured.Unstructured, namespaces map[string]bool) []*unstructured.Unstructured {
+	var kept []*unstructured.Unstructured
+	for _, object := range objects {
+		if namespaces[object.GetNamespace()] {
+			kept = append(kept, object)
+		}
+	}
+	return kept
+}
+
+// namespaces lists every namespace the UI can filter by: watched project
 // namespaces plus the namespaces that host a model.
-func namespaces(batchNamespaces []string, models []model.Model) []string {
-	seen := make(map[string]struct{}, len(batchNamespaces)+len(models))
-	for _, namespace := range batchNamespaces {
+func namespaces(projectNamespaces []string, models []model.Model) []string {
+	seen := make(map[string]struct{}, len(projectNamespaces)+len(models))
+	for _, namespace := range projectNamespaces {
 		seen[namespace] = struct{}{}
 	}
 	for _, m := range models {

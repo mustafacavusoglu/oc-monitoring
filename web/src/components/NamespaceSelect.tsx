@@ -41,6 +41,7 @@ export function NamespaceSelect({ namespaces, value, onChange }: { namespaces: s
     {open ? <div className="ns-menu">
       <input autoFocus placeholder="Namespace ara…" aria-label="Namespace ara" value={query} onChange={(event) => setQuery(event.target.value)}
         onKeyDown={(event) => { if (event.key === 'Enter' && options.length) choose(options[options.length > 1 ? 1 : 0]) }} />
+      <span className="ns-count">{options.length - 1} / {namespaces.length} namespace</span>
       <div className="ns-options" role="listbox" aria-label="Namespace’ler">
         {options.map((item) => <button key={item} type="button" role="option" aria-selected={value === item} onClick={() => choose(item)}>
           {label(item)}

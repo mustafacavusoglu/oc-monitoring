@@ -6,14 +6,17 @@ OpenShift üzerinde çalışan LLM modellerini, ML modellerini ve batch (Argo Cr
 |---|---|---|
 | LLM modelleri | `LLMInferenceService`, `InferenceService` | Her `LLMInferenceService` LLM’dir. `InferenceService`, `spec.predictor.model.runtime` ile bağlı olduğu `ServingRuntime` image’ı `LLM_RUNTIME_IMAGE_KEYWORDS` (ör. `vllm`) içeriyorsa LLM’dir. |
 | ML modelleri | `InferenceService` | Runtime image’ı `ML_RUNTIME_IMAGE_KEYWORDS` (ör. `triton`) içeriyorsa ML’dir. İki listeye de uyan runtime LLM sayılır; hiçbirine uymayanlar gösterilmez. |
+| Custom Serve | `InferenceService`, `ServingRuntime`, pod | Proje JSON’unda `Type` alanı `CUSTOM_SERVE_TYPE` (ör. `CustomServe`) olan projelerin namespace’indeki tüm `InferenceService`’ler, runtime’ından bağımsız. Pod’ları (`serving.kserve.io/inferenceservice` etiketi) hazır/restart bilgisiyle gösterilir; bu modeller LLM/ML sayfalarında tekrar sayılmaz. |
 | Batch modelleri | `CronWorkflow`, `Workflow`, pod | Proje JSON’unda `serving` listesi `BATCH_SERVING_KEYWORD` (ör. `bch`) içeren projelerin namespace’leri. Proje image’ları Nexus’ta kontrol edilir. |
+
+**Projeler** sayfası proje JSON’undaki her batch/Custom Serve projesini cluster’da bulunanlarla yan yana gösterir: namespace var mı, kaç CronWorkflow, InferenceService ve pod bulundu. Kaynağı eksik projeler en üstte listelenir; böylece dashboard’da görünmeyen bir projenin nedeni (namespace yok, kaynak yok) açıkça görülür. Okunamayan proje kayıtları (ör. JSON object olmayan değer veya aynı namespace’e dönüşen iki anahtar) tüm listeyi bozmaz; atlanır ve kaynak durumunda listelenir.
 
 Genel bakış sayfası tüm türlerin sayılarını, namespace dağılımını, sağlık durumunu ve “dikkat gerektirenler” listesini (hazır olmayan modeller, son çalışması başarısız olan veya image’ı Nexus’ta bulunmayan batch işleri) gösterir.
 
 ## Performans
 
 - Kubernetes verisi informer cache’inden okunur; tarayıcı isteği hiçbir zaman Kubernetes, Azure veya Nexus’u beklemez.
-- Model kaynakları cluster genelinde kaynak başına tek watch ile izlenir. Batch kaynakları yalnızca seçilen namespace’lerde izlenir.
+- CronWorkflow, Workflow, InferenceService, ServingRuntime, LLMInferenceService ve Namespace kaynakları cluster genelinde kaynak başına tek watch ile izlenir ve projelere bellekte filtrelenir. Yalnızca pod’lar proje namespace’lerinde ayrı ayrı izlenir.
 - Cache’e alınan nesnelerden `managedFields` ve `last-applied-configuration` atılır; nesneler kopyalanmadan okunur.
 - Nexus kontrolleri arka planda yapılır, sonuçlar `IMAGE_CACHE_TTL` boyunca cache’lenir ve eşzamanlılık `REGISTRY_CHECK_CONCURRENCY` ile sınırlanır.
 - API yanıtı gzip ile, hash’li JS/CSS dosyaları build sırasında önceden sıkıştırılmış olarak ve `immutable` cache başlığıyla sunulur.
@@ -29,6 +32,7 @@ Ortama özgü bütün değerler `deploy/openshift.yaml` içindeki `mlops-dashboa
 | `UI_REFRESH_INTERVAL` | Arayüzün yenileme aralığı (ör. `30s`). |
 | `UPSTREAM_TIMEOUT` | Azure ve Nexus HTTP istek zaman aşımı. |
 | `AZURE_REPO_URL`, `AZURE_REPO_BRANCH`, `AZURE_PROJECTS_PATH` | Proje JSON’unun Azure Repos konumu. |
+| `CUSTOM_SERVE_TYPE` | Custom Serve projelerini seçen `Type` değeri (büyük/küçük harf duyarsız). |
 | `BATCH_SERVING_KEYWORD` | Batch projelerini seçen `serving` değeri (büyük/küçük harf duyarsız, içerir eşleşmesi). |
 | `PROJECT_REFRESH_INTERVAL` | Proje JSON’unun yenilenme aralığı. |
 | `NEXUS_MANIFEST_URL_TEMPLATE` | `{namespace}` ve `{imageId}` içeren manifest URL şablonu. |
@@ -70,7 +74,7 @@ cd web && npm ci && npm run dev    # http://localhost:5173
 # Testler ve build
 go test ./... -count=1
 npm run build --prefix web
-docker buildx build --platform linux/amd64 -t mustafa12/monitor:0.0.23 --push .
+docker buildx build --platform linux/amd64 -t mustafa12/monitor:0.0.24 --push .
 ```
 
 `npm run dev`, Vite dev sunucusunda `/api/dashboard` isteğini `web/src/mock/demo.ts` içindeki deterministik dummy veriyle yanıtlar. Bu dosya yalnızca dev sunucusunda yüklenir, production bundle’a girmez.
@@ -103,10 +107,10 @@ ConfigMap değerlerini kurumunuza göre güncelleyin. Deployment `/healthz` ile 
 ServiceAccount’a ClusterRole ile yalnızca `get`, `list`, `watch` izni verilir:
 
 - `argoproj.io`: `cronworkflows`, `workflows`
-- core: `pods`
+- core: `pods`, `namespaces`
 - `serving.kserve.io`: `inferenceservices`, `servingruntimes`, `llminferenceservices`
 
-Model kaynakları cluster genelinde izlendiği için ClusterRoleBinding gerekir; batch okumaları yalnızca seçilen namespace’lerle sınırlıdır. Kapsamı platform ekibinizle doğrulayın. Açılışta her API discovery ile kontrol edilir: cluster’da sunulmayan bir kaynak (ör. `LLMInferenceService` CRD’si kurulu değilse ya da sürümü farklıysa) atlanır, pod loguna `skipping resource not served by the cluster` yazılır ve kaynak durumunun açıklamasında gösterilir. CRD sonradan kurulursa pod’u yeniden başlatın.
+Kaynaklar cluster genelinde izlendiği için ClusterRoleBinding gerekir; pod okumaları yalnızca proje namespace’leriyle sınırlıdır. Kapsamı platform ekibinizle doğrulayın. Açılışta her API discovery ile kontrol edilir: cluster’da sunulmayan bir kaynak (ör. `LLMInferenceService` CRD’si kurulu değilse ya da sürümü farklıysa) atlanır, pod loguna `skipping resource not served by the cluster` yazılır ve kaynak durumunun açıklamasında gösterilir. CRD sonradan kurulursa pod’u yeniden başlatın.
 
 ### Ağ erişimi
 

@@ -7,8 +7,11 @@ import (
 	"k8s.io/apimachinery/pkg/runtime/schema"
 )
 
-// Pods is the core v1 pod resource, which unlike the CRDs never changes version.
-var Pods = schema.GroupVersionResource{Version: "v1", Resource: "pods"}
+// Core v1 resources, which unlike the CRDs never change version.
+var (
+	Pods       = schema.GroupVersionResource{Version: "v1", Resource: "pods"}
+	Namespaces = schema.GroupVersionResource{Version: "v1", Resource: "namespaces"}
+)
 
 // NestedTime reads an RFC 3339 timestamp field; missing or malformed values are nil.
 func NestedTime(object map[string]any, path ...string) *time.Time {
