@@ -39,6 +39,18 @@ data:
   SERVING_RUNTIME_RESOURCE: serving.kserve.io/v1alpha1/servingruntimes
   LLM_INFERENCE_SERVICE_RESOURCE: serving.kserve.io/v1alpha1/llminferenceservices
 ---
+# Azure Repos PAT used to read the project JSON. Replace the placeholder
+# locally before `oc apply`; never commit a real token. Re-applying this file
+# overwrites the value in the cluster with what is written here.
+apiVersion: v1
+kind: Secret
+metadata:
+  name: mlops-dashboard-secrets
+  namespace: mlops-development
+type: Opaque
+stringData:
+  AZURE_TOKEN: "<AZURE_PAT>"
+---
 apiVersion: v1
 kind: ServiceAccount
 metadata:
@@ -123,7 +135,6 @@ spec:
                 name: mlops-dashboard-config
             - secretRef:
                 name: mlops-dashboard-secrets
-                optional: true
           ports:
             - name: http
               containerPort: 8080

@@ -38,10 +38,10 @@ Ortama özgü bütün değerler `deploy/openshift.yaml` içindeki `mlops-dashboa
 | `MIG_RESOURCE_PREFIX` | MIG dilimi kaynak öneki (ör. `nvidia.com/mig-`); kalan kısım profil adıdır (`1g.5gb`, `3g.20gb`). |
 | `CRONWORKFLOW_RESOURCE`, `WORKFLOW_RESOURCE`, `INFERENCE_SERVICE_RESOURCE`, `SERVING_RUNTIME_RESOURCE`, `LLM_INFERENCE_SERVICE_RESOURCE` | İzlenen API’ler, `group/version/resource` biçiminde. Cluster’daki CRD sürümü farklıysa buradan değiştirilir. |
 
-Azure Repos anonim okumaya açık değilse PAT’i Secret olarak ekleyin; Secret’taki `AZURE_TOKEN` loglanmaz:
+Azure PAT, manifestteki `mlops-dashboard-secrets` Secret’ının `AZURE_TOKEN` alanından okunur ve loglanmaz. `oc apply` öncesinde `<AZURE_PAT>` yerine token’ı yerel kopyanızda yazın; gerçek token’ı commit etmeyin. Manifesti her uyguladığınızda Secret dosyadaki değerle güncellenir. Token’ı dosyaya yazmak istemezseniz Secret bloğunu silip Secret’ı komutla oluşturabilirsiniz:
 
 ```sh
-oc create secret generic mlops-dashboard-secrets --from-file=AZURE_TOKEN=./azure-token -n mlops-development
+oc create secret generic mlops-dashboard-secrets --from-literal=AZURE_TOKEN=<AZURE_PAT> -n mlops-development
 ```
 
 ### Proje JSON’u
