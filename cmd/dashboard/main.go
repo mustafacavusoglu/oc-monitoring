@@ -40,7 +40,7 @@ func main() {
 		cluster.AllNamespaces)
 	podWatcher := cluster.NewWatcher("pods", clients,
 		[]schema.GroupVersionResource{cluster.Pods},
-		func() []string { return projectSource.Snapshot().WatchedNamespaces() })
+		func() []string { return projectSource.Snapshot().AllNamespaces() })
 	imageChecker := registry.NewChecker(cfg.NexusManifestURLTemplate, cfg.ImageCacheTTL, cfg.RegistryCheckConcurrency, cfg.UpstreamTimeout)
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)

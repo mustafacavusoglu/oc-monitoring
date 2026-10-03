@@ -23,8 +23,9 @@ const columns: Column<Project>[] = [
   {
     key: 'type', header: 'Tür', sortValue: (p) => Number(p.batch) + 2 * Number(p.customServe),
     render: (p) => <div className="stack">
-      {p.batch ? <span className="type-tag type-batch">Batch</span> : null}
+      {p.batch ? <span className="type-tag type-batch">BCH</span> : null}
       {p.customServe ? <span className="type-tag type-custom">Custom Serve</span> : null}
+      {!p.batch && !p.customServe ? <span className="muted">—</span> : null}
     </div>,
   },
   {
@@ -43,7 +44,7 @@ export function Projects({ projects }: { projects: Project[] }) {
   const [query, setQuery] = useState('')
   const kpis = [
     { key: 'all', label: 'Proje', value: projects.length, sub: 'Proje JSON’undan' },
-    { key: 'batch', label: 'Batch projesi', value: projects.filter(FILTERS.batch).length },
+    { key: 'batch', label: 'BCH projesi', value: projects.filter(FILTERS.batch).length, sub: 'Nexus image kontrolü yapılır' },
     { key: 'custom', label: 'Custom Serve projesi', value: projects.filter(FILTERS.custom).length },
     { key: 'gap', label: 'Kaynağı eksik', value: projects.filter(FILTERS.gap).length, sub: 'Namespace veya kaynak yok', tone: 'critical' as const },
   ]

@@ -13,11 +13,16 @@ type ImageChecker interface {
 	Lookup(ctx context.Context, urls []string) map[string]model.ImageResult
 }
 
-// ResolveImages fills the registry status of every project image in place and
-// returns the registry's health as seen by this lookup.
-func ResolveImages(ctx context.Context, views []model.CronWorkflow, checker ImageChecker) model.SourceHealth {
+// ResolveImages fills the registry status of the project images of views in
+// checked namespaces, clears the images of the others, and returns the
+// registry's health as seen by this lookup.
+func ResolveImages(ctx context.Context, views []model.CronWorkflow, checked map[string]bool, checker ImageChecker) model.SourceHealth {
 	var urls []string
 	for i := range views {
+		if !checked[views[i].Namespace] {
+			views[i].Images = []model.ImageResult{}
+			continue
+		}
 		for j := range views[i].Images {
 			image := &views[i].Images[j]
 			if image.ImageID != "" {

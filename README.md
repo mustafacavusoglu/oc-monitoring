@@ -7,7 +7,7 @@ OpenShift üzerinde çalışan LLM modellerini, ML modellerini ve batch (Argo Cr
 | LLM modelleri | `LLMInferenceService`, `InferenceService` | Her `LLMInferenceService` LLM’dir. `InferenceService`, `spec.predictor.model.runtime` ile bağlı olduğu `ServingRuntime` image’ı `LLM_RUNTIME_IMAGE_KEYWORDS` (ör. `vllm`) içeriyorsa LLM’dir. |
 | ML modelleri | `InferenceService` | Runtime image’ı `ML_RUNTIME_IMAGE_KEYWORDS` (ör. `triton`) içeriyorsa ML’dir. İki listeye de uyan runtime LLM sayılır; hiçbirine uymayanlar gösterilmez. |
 | Custom Serve | `InferenceService`, `ServingRuntime`, pod | Proje JSON’unda `Type` alanı `CUSTOM_SERVE_TYPE` (ör. `CustomServe`) olan projelerin namespace’indeki tüm `InferenceService`’ler, runtime’ından bağımsız. Pod’ları (`serving.kserve.io/inferenceservice` etiketi) hazır/restart bilgisiyle gösterilir; bu modeller LLM/ML sayfalarında tekrar sayılmaz. |
-| Batch modelleri | `CronWorkflow`, `Workflow`, pod | Proje JSON’unda `serving` listesi `BATCH_SERVING_KEYWORD` (ör. `bch`) içeren projelerin namespace’leri. Proje image’ları Nexus’ta kontrol edilir. |
+| Batch modelleri | `CronWorkflow`, `Workflow`, pod | Proje JSON’undaki **tüm** projelerin namespace’lerindeki CronWorkflow’lar. Yalnızca `serving` listesi `BATCH_SERVING_KEYWORD` (ör. `bch`) içeren projelerin image’ları Nexus’ta kontrol edilir. |
 
 **Projeler** sayfası proje JSON’undaki her batch/Custom Serve projesini cluster’da bulunanlarla yan yana gösterir: namespace var mı, kaç CronWorkflow, InferenceService ve pod bulundu. Kaynağı eksik projeler en üstte listelenir; böylece dashboard’da görünmeyen bir projenin nedeni (namespace yok, kaynak yok) açıkça görülür. Okunamayan proje kayıtları (ör. JSON object olmayan değer veya aynı namespace’e dönüşen iki anahtar) tüm listeyi bozmaz; atlanır ve kaynak durumunda listelenir.
 
@@ -33,7 +33,7 @@ Ortama özgü bütün değerler `deploy/openshift.yaml` içindeki `mlops-dashboa
 | `UPSTREAM_TIMEOUT` | Azure ve Nexus HTTP istek zaman aşımı. |
 | `AZURE_REPO_URL`, `AZURE_REPO_BRANCH`, `AZURE_PROJECTS_PATH` | Proje JSON’unun Azure Repos konumu. |
 | `CUSTOM_SERVE_TYPE` | Custom Serve projelerini seçen `Type` değeri (büyük/küçük harf duyarsız). |
-| `BATCH_SERVING_KEYWORD` | Batch projelerini seçen `serving` değeri (büyük/küçük harf duyarsız, içerir eşleşmesi). |
+| `BATCH_SERVING_KEYWORD` | Nexus image kontrolü yapılacak (BCH) projeleri seçen `serving` değeri (büyük/küçük harf duyarsız, içerir eşleşmesi). |
 | `PROJECT_REFRESH_INTERVAL` | Proje JSON’unun yenilenme aralığı. |
 | `NEXUS_MANIFEST_URL_TEMPLATE` | `{namespace}` ve `{imageId}` içeren manifest URL şablonu. |
 | `IMAGE_CACHE_TTL`, `REGISTRY_CHECK_CONCURRENCY` | Nexus sonuç cache süresi ve aynı anda yapılabilecek kontrol sayısı. |
@@ -74,7 +74,7 @@ cd web && npm ci && npm run dev    # http://localhost:5173
 # Testler ve build
 go test ./... -count=1
 npm run build --prefix web
-docker buildx build --platform linux/amd64 -t mustafa12/monitor:0.0.24 --push .
+docker buildx build --platform linux/amd64 -t mustafa12/monitor:0.0.25 --push .
 ```
 
 `npm run dev`, Vite dev sunucusunda `/api/dashboard` isteğini `web/src/mock/demo.ts` içindeki deterministik dummy veriyle yanıtlar. Bu dosya yalnızca dev sunucusunda yüklenir, production bundle’a girmez.

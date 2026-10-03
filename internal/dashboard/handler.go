@@ -73,11 +73,11 @@ func (h *Handler) snapshot(ctx context.Context, now time.Time) model.DashboardRe
 	podSnapshot := h.sources.Pods()
 	objects, pods := clusterSnapshot.Objects, podSnapshot.Objects[cluster.Pods]
 	res := h.cfg.Resources
-	batchNamespaces := toSet(projectSnapshot.BatchNamespaces())
+	projectNamespaces := toSet(projectSnapshot.AllNamespaces())
 
 	cronWorkflows := batch.BuildViews(
-		inNamespaces(objects[res.CronWorkflows], batchNamespaces),
-		inNamespaces(objects[res.Workflows], batchNamespaces),
+		inNamespaces(objects[res.CronWorkflows], projectNamespaces),
+		inNamespaces(objects[res.Workflows], projectNamespaces),
 		pods,
 		now,
 	)
@@ -105,9 +105,9 @@ func (h *Handler) snapshot(ctx context.Context, now time.Time) model.DashboardRe
 			Projects: projectHealth,
 			Cluster:  clusterSnapshot.Health,
 			Pods:     podSnapshot.Health,
-			Registry: batch.ResolveImages(ctx, cronWorkflows, h.sources.Images),
+			Registry: batch.ResolveImages(ctx, cronWorkflows, toSet(projectSnapshot.BatchNamespaces()), h.sources.Images),
 		},
-		Namespaces:    namespaces(projectSnapshot.WatchedNamespaces(), models),
+		Namespaces:    namespaces(projectSnapshot.AllNamespaces(), models),
 		Projects:      coverage(projectSnapshot.Projects, objects, res, pods),
 		Models:        models,
 		CronWorkflows: cronWorkflows,

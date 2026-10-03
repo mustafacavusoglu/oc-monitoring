@@ -15,7 +15,7 @@ import (
 
 var testRules = rules{batchKeyword: "bch", customServeType: "CustomServe"}
 
-func TestSourceRefreshSelectsBatchAndCustomServeProjects(t *testing.T) {
+func TestSourceRefreshReadsEveryProject(t *testing.T) {
 	data, err := os.ReadFile("testdata/projects.json")
 	if err != nil {
 		t.Fatal(err)
@@ -41,6 +41,9 @@ func TestSourceRefreshSelectsBatchAndCustomServeProjects(t *testing.T) {
 	if got, want := snapshot.CustomServeNamespaces(), []string{"retail-model", "platform-tools"}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("custom serve namespaces = %v, want %v", got, want)
 	}
+	if got, want := snapshot.AllNamespaces(), []string{"payments-api", "retail-model", "platform-tools", "unclassified"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("all namespaces = %v, want every project %v", got, want)
+	}
 }
 
 func TestParseProjectsSkipsBadEntriesInsteadOfFailing(t *testing.T) {
@@ -62,8 +65,8 @@ func TestParseProjectsSkipsBadEntriesInsteadOfFailing(t *testing.T) {
 	if got, want := snapshot.CustomServeNamespaces(), []string{"custom-proje"}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("custom serve namespaces = %v, want %v", got, want)
 	}
-	if len(projects) != 4 {
-		t.Fatalf("projects = %d, want 4 (not CM_PROJE, BROKEN or the duplicate)", len(projects))
+	if len(projects) != 5 {
+		t.Fatalf("projects = %d, want 5 (every entry but BROKEN and the duplicate)", len(projects))
 	}
 	if len(skipped) != 2 {
 		t.Fatalf("skipped = %q, want BROKEN and the duplicate namespace", skipped)

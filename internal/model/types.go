@@ -120,8 +120,9 @@ type Sources struct {
 	Registry SourceHealth `json:"registry"`
 }
 
-// Project is a batch and/or Custom Serve project from the project JSON, with
-// what the cluster actually holds for it so gaps are visible.
+// Project is a project from the project JSON, with what the cluster actually
+// holds for it so gaps are visible. Batch means its `serving` list has the
+// batch keyword (its images are checked in Nexus).
 type Project struct {
 	Key         string `json:"key"`
 	Namespace   string `json:"namespace"`

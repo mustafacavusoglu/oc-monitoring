@@ -18,7 +18,7 @@ import (
 )
 
 type Snapshot struct {
-	// Projects lists every batch or Custom Serve project.
+	// Projects lists every project in the project JSON.
 	Projects []model.Project
 	// Skipped lists project entries that could not be read.
 	Skipped     []string
@@ -45,9 +45,10 @@ func (s Snapshot) CustomServeNamespaces() []string {
 	return s.namespaces(func(p model.Project) bool { return p.CustomServe })
 }
 
-// WatchedNamespaces are the namespaces whose pods are watched.
-func (s Snapshot) WatchedNamespaces() []string {
-	return s.namespaces(func(p model.Project) bool { return p.Batch || p.CustomServe })
+// AllNamespaces are the namespaces of every project; their CronWorkflows and
+// pods are watched.
+func (s Snapshot) AllNamespaces() []string {
+	return s.namespaces(func(model.Project) bool { return true })
 }
 
 type rules struct {
@@ -120,8 +121,8 @@ func (s *Source) refresh(ctx context.Context) {
 	s.mu.Unlock()
 }
 
-// parseProjects keeps batch and Custom Serve projects. A malformed entry is
-// skipped (and reported) instead of failing the whole project list.
+// parseProjects reads every project. A malformed entry is skipped (and
+// reported) instead of failing the whole project list.
 func parseProjects(raw map[string]json.RawMessage, r rules) ([]model.Project, []string) {
 	keys := make([]string, 0, len(raw))
 	for key := range raw {
@@ -151,16 +152,13 @@ func parseProjects(raw map[string]json.RawMessage, r rules) ([]model.Project, []
 
 		serving := stringList(field(fields, "serving"))
 		projectType := strings.Join(stringList(field(fields, "type")), ",")
-		project := model.Project{
+		projects = append(projects, model.Project{
 			Key:         key,
 			Namespace:   namespace,
 			Type:        projectType,
 			Batch:       slices.ContainsFunc(serving, func(v string) bool { return strings.Contains(strings.ToLower(v), r.batchKeyword) }),
 			CustomServe: strings.EqualFold(strings.TrimSpace(projectType), r.customServeType),
-		}
-		if project.Batch || project.CustomServe {
-			projects = append(projects, project)
-		}
+		})
 	}
 	return projects, skipped
 }
