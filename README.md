@@ -7,9 +7,9 @@ OpenShift üzerinde çalışan LLM modellerini, ML modellerini ve batch (Argo Cr
 | LLM modelleri | `LLMInferenceService`, `InferenceService` | Her `LLMInferenceService` LLM’dir. `InferenceService`, `spec.predictor.model.runtime` ile bağlı olduğu `ServingRuntime` image’ı `LLM_RUNTIME_IMAGE_KEYWORDS` (ör. `vllm`) içeriyorsa LLM’dir. |
 | ML modelleri | `InferenceService` | Runtime image’ı `ML_RUNTIME_IMAGE_KEYWORDS` (ör. `triton`) içeriyorsa ML’dir. İki listeye de uyan runtime LLM sayılır; hiçbirine uymayanlar gösterilmez. |
 | Custom Serve | `InferenceService`, `ServingRuntime`, pod | Proje JSON’unda `Type` alanı `CUSTOM_SERVE_TYPE` (ör. `CustomServe`) olan projelerin namespace’indeki tüm `InferenceService`’ler, runtime’ından bağımsız. Pod’ları (`serving.kserve.io/inferenceservice` etiketi) hazır/restart bilgisiyle gösterilir; bu modeller LLM/ML sayfalarında tekrar sayılmaz. |
-| Batch modelleri | `CronWorkflow`, `Workflow`, pod | Cluster’daki **tüm** CronWorkflow’lar. Her CronWorkflow, image adında geçen projeye bağlanır (`bch-<proje>:<imageId>`; birden fazla proje geçerse en uzun eşleşme). Image eşleşmezse bulunduğu namespace proje ise o kullanılır. CronWorkflow’un proje namespace’inde olması gerekmez. Yalnızca `serving` listesi `BATCH_SERVING_KEYWORD` içeren projelerin image’ları Nexus’ta kontrol edilir. |
+| Batch modelleri | `CronWorkflow`, `Workflow`, pod | Proje JSON’undaki **tüm** projelerin namespace’lerindeki CronWorkflow’lar. Yalnızca `serving` listesi `BATCH_SERVING_KEYWORD` (ör. `bch`) içeren projelerin image’ları Nexus’ta kontrol edilir. |
 
-**Projeler** sayfası proje JSON’undaki her batch/Custom Serve projesini cluster’da bulunanlarla yan yana gösterir: namespace var mı, kaç CronWorkflow, InferenceService ve pod bulundu. Kaynağı eksik projeler en üstte listelenir; böylece dashboard’da görünmeyen bir projenin nedeni (namespace yok, kaynak yok) açıkça görülür. Okunamayan proje kayıtları (ör. JSON object olmayan değer veya aynı namespace’e dönüşen iki anahtar) tüm listeyi bozmaz; atlanır ve kaynak durumunda listelenir.
+**Projeler** sayfası proje JSON’undaki her batch/Custom Serve projesini cluster’da bulunanlarla yan yana gösterir: namespace var mı, kaç CronWorkflow, InferenceService ve pod bulundu. Cluster’da olup namespace’i hiçbir projeye ait olmayan CronWorkflow’lar da aynı sayfada ayrıca listelenir; böylece cluster toplamı ile dashboard’daki sayı karşılaştırılabilir. Kaynağı eksik projeler en üstte listelenir; böylece dashboard’da görünmeyen bir projenin nedeni (namespace yok, kaynak yok) açıkça görülür. Okunamayan proje kayıtları (ör. JSON object olmayan değer veya aynı namespace’e dönüşen iki anahtar) tüm listeyi bozmaz; atlanır ve kaynak durumunda listelenir.
 
 Genel bakış sayfası tüm türlerin sayılarını, namespace dağılımını, sağlık durumunu ve “dikkat gerektirenler” listesini (hazır olmayan modeller, son çalışması başarısız olan veya image’ı Nexus’ta bulunmayan batch işleri) gösterir.
 
@@ -61,7 +61,7 @@ Proje key’i küçük harfe çevrilir ve `_` karakterleri `-` olur; sonuç name
 
 ### Nexus image kontrolü
 
-CronWorkflow `spec.workflowSpec` altındaki image’lardan yalnızca adı bağlı olduğu projeyi içerenler kontrol edilir; şablondaki `{namespace}` bu proje adıdır. Image ID, image’ın son `:` parçasıdır ve şablona yerleştirilir: `.../bch-{namespace}/manifests/{imageId}` → `.../bch-yazi-girisi-model/manifests/ald7383jdls8373`. HTTP 200 `Mevcut`, 404 `Bulunamadı`, diğer durumlar `Hata` olarak gösterilir. Her istek, sonuç ve cache kullanımı `INFO` seviyesinde loglanır.
+CronWorkflow `spec.workflowSpec` altındaki image’lardan yalnızca adı namespace’i içerenler kontrol edilir. Image ID, image’ın son `:` parçasıdır ve şablona yerleştirilir: `.../bch-{namespace}/manifests/{imageId}` → `.../bch-yazi-girisi-model/manifests/ald7383jdls8373`. HTTP 200 `Mevcut`, 404 `Bulunamadı`, diğer durumlar `Hata` olarak gösterilir. Her istek, sonuç ve cache kullanımı `INFO` seviyesinde loglanır.
 
 ## Geliştirme
 
@@ -74,7 +74,7 @@ cd web && npm ci && npm run dev    # http://localhost:5173
 # Testler ve build
 go test ./... -count=1
 npm run build --prefix web
-docker buildx build --platform linux/amd64 -t mustafa12/monitor:0.0.26 --push .
+docker buildx build --platform linux/amd64 -t mustafa12/monitor:0.0.27 --push .
 ```
 
 `npm run dev`, Vite dev sunucusunda `/api/dashboard` isteğini `web/src/mock/demo.ts` içindeki deterministik dummy veriyle yanıtlar. Bu dosya yalnızca dev sunucusunda yüklenir, production bundle’a girmez.

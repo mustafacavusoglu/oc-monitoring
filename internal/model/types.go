@@ -69,7 +69,6 @@ type WorkflowRun struct {
 type CronWorkflow struct {
 	Namespace       string        `json:"namespace"`
 	Name            string        `json:"name"`
-	Project         string        `json:"project,omitempty"` // project its image names
 	Schedules       []string      `json:"schedules"`
 	Timezone        string        `json:"timezone,omitempty"`
 	Suspended       bool          `json:"suspended"`
@@ -145,4 +144,7 @@ type DashboardResponse struct {
 	Projects               []Project      `json:"projects"`
 	Models                 []Model        `json:"models"`
 	CronWorkflows          []CronWorkflow `json:"cronWorkflows"`
+	// OutsideProjects lists "namespace/name" of CronWorkflows in namespaces
+	// that belong to no project, so the cluster total can be reconciled.
+	OutsideProjects []string `json:"outsideProjects"`
 }

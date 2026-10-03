@@ -41,9 +41,8 @@ export default function App() {
   }, [theme])
 
   const { models, cronWorkflows, projects } = useMemo(() => {
-    // A CronWorkflow in a shared namespace also matches its project's namespace.
-    const inScope = <T extends { namespace: string; project?: string }>(items: T[] = []) =>
-      namespace === ALL_NAMESPACES ? items : items.filter((item) => item.namespace === namespace || item.project === namespace)
+    const inScope = <T extends { namespace: string }>(items: T[] = []) =>
+      namespace === ALL_NAMESPACES ? items : items.filter((item) => item.namespace === namespace)
     return { models: inScope(data?.models), cronWorkflows: inScope(data?.cronWorkflows), projects: inScope(data?.projects) }
   }, [data, namespace])
 
@@ -81,7 +80,7 @@ export default function App() {
         {!data ? (error ? null : <div className="loading">Veriler yükleniyor…</div>)
           : page === 'overview' ? <Overview models={models} cronWorkflows={cronWorkflows} onNavigate={goTo} />
           : page === 'batch' ? <Batch cronWorkflows={cronWorkflows} now={Date.parse(data.generatedAt)} />
-          : page === 'projects' ? <Projects projects={projects} />
+          : page === 'projects' ? <Projects projects={projects} outside={data.outsideProjects ?? []} />
           : <Models key={page} type={page} models={models.filter((m) => m.type === page)} />}
       </main>
     </div>

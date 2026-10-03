@@ -39,7 +39,7 @@ const columns: Column<Project>[] = [
 ]
 
 /** Every project from the project JSON next to what the cluster holds, so gaps are visible. */
-export function Projects({ projects }: { projects: Project[] }) {
+export function Projects({ projects, outside }: { projects: Project[]; outside: string[] }) {
   const [filter, setFilter] = useState<Filter>('all')
   const [query, setQuery] = useState('')
   const kpis = [
@@ -57,5 +57,8 @@ export function Projects({ projects }: { projects: Project[] }) {
       <DataTable rows={visible} columns={columns} rowKey={(p) => p.key} empty="Bu filtrelerle eşleşen proje yok."
         initialSort={{ key: 'gap', direction: 1 }} />
     </Panel>
+    {outside.length ? <Panel title="Proje namespace’i dışındaki CronWorkflow’lar" subtitle={`${outside.length} CronWorkflow · namespace’i proje JSON’unda yok, dashboard’da gösterilmez`}>
+      <ul className="plain-list">{outside.map((name) => <li key={name}><code>{name}</code></li>)}</ul>
+    </Panel> : null}
   </div>
 }

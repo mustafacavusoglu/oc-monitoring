@@ -34,8 +34,6 @@ export type WorkflowRun = RunSummary & {
 export type CronWorkflow = {
   namespace: string
   name: string
-  /** Project its image names (bch-<project>:<imageId>); may differ from namespace. */
-  project?: string
   schedules: string[]
   timezone?: string
   suspended: boolean
@@ -108,4 +106,6 @@ export type DashboardResponse = {
   projects: Project[]
   models: Model[]
   cronWorkflows: CronWorkflow[]
+  /** "namespace/name" of CronWorkflows in no project's namespace. */
+  outsideProjects: string[]
 }

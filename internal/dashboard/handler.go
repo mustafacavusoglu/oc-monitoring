@@ -73,7 +73,14 @@ func (h *Handler) snapshot(ctx context.Context, now time.Time) model.DashboardRe
 	podSnapshot := h.sources.Pods()
 	objects, pods := clusterSnapshot.Objects, podSnapshot.Objects[cluster.Pods]
 	res := h.cfg.Resources
-	cronWorkflows := batch.BuildViews(objects[res.CronWorkflows], objects[res.Workflows], pods, projectSnapshot.AllNamespaces(), now)
+	projectNamespaces := toSet(projectSnapshot.AllNamespaces())
+
+	cronWorkflows := batch.BuildViews(
+		inNamespaces(objects[res.CronWorkflows], projectNamespaces),
+		inNamespaces(objects[res.Workflows], projectNamespaces),
+		pods,
+		now,
+	)
 	models := serving.BuildModels(
 		objects[res.InferenceServices],
 		objects[res.ServingRuntimes],
@@ -100,16 +107,17 @@ func (h *Handler) snapshot(ctx context.Context, now time.Time) model.DashboardRe
 			Pods:     podSnapshot.Health,
 			Registry: batch.ResolveImages(ctx, cronWorkflows, toSet(projectSnapshot.BatchNamespaces()), h.sources.Images),
 		},
-		Namespaces:    namespaces(projectSnapshot.AllNamespaces(), models, cronWorkflows),
-		Projects:      coverage(projectSnapshot.Projects, objects, res, pods, cronWorkflows),
-		Models:        models,
-		CronWorkflows: cronWorkflows,
+		Namespaces:      namespaces(projectSnapshot.AllNamespaces(), models),
+		Projects:        coverage(projectSnapshot.Projects, objects, res, pods),
+		Models:          models,
+		CronWorkflows:   cronWorkflows,
+		OutsideProjects: outside(objects[res.CronWorkflows], projectNamespaces),
 	}
 }
 
 // coverage adds to every project what the cluster holds in its namespace, so
 // a project with no resources (or no namespace) is visible.
-func coverage(source []model.Project, objects map[schema.GroupVersionResource][]*unstructured.Unstructured, res config.Resources, pods []*unstructured.Unstructured, cronWorkflows []model.CronWorkflow) []model.Project {
+func coverage(source []model.Project, objects map[schema.GroupVersionResource][]*unstructured.Unstructured, res config.Resources, pods []*unstructured.Unstructured) []model.Project {
 	count := func(items []*unstructured.Unstructured) map[string]int {
 		counts := make(map[string]int)
 		for _, item := range items {
@@ -121,16 +129,12 @@ func coverage(source []model.Project, objects map[schema.GroupVersionResource][]
 	for _, namespace := range objects[cluster.Namespaces] {
 		existing[namespace.GetName()] = true
 	}
-	inferenceServices, podCounts := count(objects[res.InferenceServices]), count(pods)
-	cronCounts := make(map[string]int)
-	for _, cronWorkflow := range cronWorkflows {
-		cronCounts[cronWorkflow.Project]++
-	}
+	cronWorkflows, inferenceServices, podCounts := count(objects[res.CronWorkflows]), count(objects[res.InferenceServices]), count(pods)
 
 	result := make([]model.Project, 0, len(source))
 	for _, project := range source {
 		project.NamespaceExists = existing[project.Namespace]
-		project.CronWorkflows = cronCounts[project.Namespace]
+		project.CronWorkflows = cronWorkflows[project.Namespace]
 		project.InferenceServices = inferenceServices[project.Namespace]
 		project.Pods = podCounts[project.Namespace]
 		result = append(result, project)
@@ -146,18 +150,36 @@ func toSet(values []string) map[string]bool {
 	return set
 }
 
-// namespaces lists every namespace the UI can filter by: project namespaces
-// plus the namespaces that host a model or a CronWorkflow.
-func namespaces(projectNamespaces []string, models []model.Model, cronWorkflows []model.CronWorkflow) []string {
+func outside(objects []*unstructured.Unstructured, namespaces map[string]bool) []string {
+	names := []string{}
+	for _, object := range objects {
+		if !namespaces[object.GetNamespace()] {
+			names = append(names, cluster.Key(object.GetNamespace(), object.GetName()))
+		}
+	}
+	sort.Strings(names)
+	return names
+}
+
+func inNamespaces(objects []*unstructured.Unstructured, namespaces map[string]bool) []*unstructured.Unstructured {
+	var kept []*unstructured.Unstructured
+	for _, object := range objects {
+		if namespaces[object.GetNamespace()] {
+			kept = append(kept, object)
+		}
+	}
+	return kept
+}
+
+// namespaces lists every namespace the UI can filter by: watched project
+// namespaces plus the namespaces that host a model.
+func namespaces(projectNamespaces []string, models []model.Model) []string {
 	seen := make(map[string]struct{}, len(projectNamespaces)+len(models))
 	for _, namespace := range projectNamespaces {
 		seen[namespace] = struct{}{}
 	}
 	for _, m := range models {
 		seen[m.Namespace] = struct{}{}
-	}
-	for _, cronWorkflow := range cronWorkflows {
-		seen[cronWorkflow.Namespace] = struct{}{}
 	}
 	result := make([]string, 0, len(seen))
 	for namespace := range seen {

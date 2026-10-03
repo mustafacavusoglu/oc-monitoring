@@ -159,7 +159,7 @@ function buildCronWorkflow([namespace, name, schedule]: (typeof BATCH_SEEDS)[num
 
   const podPhase = latest?.phase === 'Running' ? 'Running' : latest?.phase === 'Succeeded' ? 'Succeeded' : 'Failed'
   return {
-    namespace, name, project: namespace, schedules: [schedule],
+    namespace, name, schedules: [schedule],
     timezone: index % 5 === 0 ? 'UTC (assumed)' : 'Europe/Istanbul',
     suspended,
     active: running,
@@ -256,6 +256,7 @@ export function createDemoDashboard(date: Date): DashboardResponse {
     sources: { projects: ok, cluster: ok, pods: ok, registry: { ...ok, lastSuccess: iso(now - 13 * MINUTE) } },
     namespaces: [...new Set([...models, ...cronWorkflows, ...projects].map((item) => item.namespace))].sort(),
     projects,
+    outsideProjects: ['argo/argo-cleanup', 'openshift-logging/log-rotate'],
     models,
     cronWorkflows,
   }
