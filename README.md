@@ -7,9 +7,11 @@ OpenShift üzerinde çalışan LLM modellerini, ML modellerini ve batch (Argo Cr
 | LLM modelleri | `LLMInferenceService`, `InferenceService` | Her `LLMInferenceService` LLM’dir. `InferenceService`, `spec.predictor.model.runtime` ile bağlı olduğu `ServingRuntime` image’ı `LLM_RUNTIME_IMAGE_KEYWORDS` (ör. `vllm`) içeriyorsa LLM’dir. |
 | ML modelleri | `InferenceService` | Runtime image’ı `ML_RUNTIME_IMAGE_KEYWORDS` (ör. `triton`) içeriyorsa ML’dir. İki listeye de uyan runtime LLM sayılır; hiçbirine uymayanlar gösterilmez. |
 | Custom Serve | `InferenceService`, `ServingRuntime`, pod | Proje JSON’unda `Type` alanı `CUSTOM_SERVE_TYPE` (ör. `CustomServe`) olan projelerin namespace’indeki tüm `InferenceService`’ler, runtime’ından bağımsız. Pod’ları (`serving.kserve.io/inferenceservice` etiketi) hazır/restart bilgisiyle gösterilir; bu modeller LLM/ML sayfalarında tekrar sayılmaz. |
-| Batch modelleri | `CronWorkflow`, `Workflow`, pod | Proje JSON’undaki **tüm** projelerin namespace’lerindeki CronWorkflow’lar. Yalnızca `serving` listesi `BATCH_SERVING_KEYWORD` (ör. `bch`) içeren projelerin image’ları Nexus’ta kontrol edilir. |
+| Batch modelleri | `CronWorkflow`, `Workflow`, pod | Cluster’daki **tüm** namespace’lerin CronWorkflow’ları, son Workflow’ları ve pod’ları. Proje JSON’u yalnızca namespace’leri ve proje türünü (BCH, Custom Serve) verir; kaynakların kendisi OpenShift’ten okunur. |
 
-**Projeler** sayfası proje JSON’undaki her batch/Custom Serve projesini cluster’da bulunanlarla yan yana gösterir: namespace var mı, kaç CronWorkflow, InferenceService ve pod bulundu. Cluster’da olup namespace’i hiçbir projeye ait olmayan CronWorkflow’lar da aynı sayfada ayrıca listelenir; böylece cluster toplamı ile dashboard’daki sayı karşılaştırılabilir. Kaynağı eksik projeler en üstte listelenir; böylece dashboard’da görünmeyen bir projenin nedeni (namespace yok, kaynak yok) açıkça görülür. Okunamayan proje kayıtları (ör. JSON object olmayan değer veya aynı namespace’e dönüşen iki anahtar) tüm listeyi bozmaz; atlanır ve kaynak durumunda listelenir.
+**Projeler** sayfası proje JSON’undaki her batch/Custom Serve projesini cluster’da bulunanlarla yan yana gösterir: namespace var mı, kaç CronWorkflow, InferenceService ve pod bulundu. Kaynağı eksik projeler en üstte listelenir; böylece dashboard’da görünmeyen bir projenin nedeni (namespace yok, kaynak yok) açıkça görülür. Okunamayan proje kayıtları (ör. JSON object olmayan değer veya aynı namespace’e dönüşen iki anahtar) tüm listeyi bozmaz; atlanır ve kaynak durumunda listelenir.
+
+**Filtreleme:** Her grafikteki çubuk, segment, donut dilimi ve KPI kartı tıklanınca o sayfanın listesini filtreler; Genel bakış’taki grafikler ilgili türün sayfasını o filtreyle açar (ör. Sağlık durumu → Batch · Sorunlu). Aktif filtreler listenin üstünde kaldırılabilir etiketler olarak görünür ve URL’de tutulur (`#/batch?ns=kredi-skor&f=critical`), bu yüzden filtreli görünüm link olarak paylaşılabilir.
 
 Genel bakış sayfası tüm türlerin sayılarını, namespace dağılımını, sağlık durumunu ve “dikkat gerektirenler” listesini (hazır olmayan modeller, son çalışması başarısız olan veya image’ı Nexus’ta bulunmayan batch işleri) gösterir.
 
@@ -61,7 +63,7 @@ Proje key’i küçük harfe çevrilir ve `_` karakterleri `-` olur; sonuç name
 
 ### Nexus image kontrolü
 
-CronWorkflow `spec.workflowSpec` altındaki image’lardan yalnızca adı namespace’i içerenler kontrol edilir. Image ID, image’ın son `:` parçasıdır ve şablona yerleştirilir: `.../bch-{namespace}/manifests/{imageId}` → `.../bch-yazi-girisi-model/manifests/ald7383jdls8373`. HTTP 200 `Mevcut`, 404 `Bulunamadı`, diğer durumlar `Hata` olarak gösterilir. Her istek, sonuç ve cache kullanımı `INFO` seviyesinde loglanır.
+Repository yolunda `BATCH_SERVING_KEYWORD-` (ör. `bch-`) ile başlayan bir parça ve tag (ya da `@sha256:` digest) içeren her image kontrol edilir. Image CronWorkflow’un herhangi bir yerinde olabilir: template container/script/sidecar/init image’ları veya `{{workflow.parameters.image}}` kullanan template’ler için workflow parametrelerinin değerleri. CronWorkflow `workflowTemplateRef` kullanıyorsa image’lar son Workflow’un sakladığı template spec’ten okunur. Şablondaki `{namespace}`, image’daki `bch-` sonrası proje adıdır; image ID tag veya digest’tir: `repomaster.../mlops/bch-yazi-girisi-model:ald7383jdls8373` → `.../bch-yazi-girisi-model/manifests/ald7383jdls8373`. Kontrol edilecek image bulunamayan CronWorkflow’lar Batch sayfasında “Image kontrolü yok” kartıyla listelenir. HTTP 200 `Mevcut`, 404 `Bulunamadı`, diğer durumlar `Hata` olarak gösterilir. Her istek, sonuç ve cache kullanımı `INFO` seviyesinde loglanır.
 
 ## Geliştirme
 
@@ -74,7 +76,7 @@ cd web && npm ci && npm run dev    # http://localhost:5173
 # Testler ve build
 go test ./... -count=1
 npm run build --prefix web
-docker buildx build --platform linux/amd64 -t mustafa12/monitor:0.0.27 --push .
+docker buildx build --platform linux/amd64 -t mustafa12/monitor:0.0.28 --push .
 ```
 
 `npm run dev`, Vite dev sunucusunda `/api/dashboard` isteğini `web/src/mock/demo.ts` içindeki deterministik dummy veriyle yanıtlar. Bu dosya yalnızca dev sunucusunda yüklenir, production bundle’a girmez.

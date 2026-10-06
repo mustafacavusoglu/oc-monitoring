@@ -1,4 +1,5 @@
 import { useMemo, useState } from 'react'
+import { FilterBar } from '../components/FilterBar'
 import { DataTable, NameCell, type Column } from '../components/DataTable'
 import { DetailList } from '../components/DetailList'
 import { KpiRow } from '../components/Kpi'
@@ -10,20 +11,28 @@ import { Donut } from '../components/charts/Donut'
 import { RunHistory } from '../components/charts/RunHistory'
 import { Timeline } from '../components/charts/Timeline'
 import { formatDateTime, formatDuration, formatRelative, formatTime, matchesQuery } from '../lib/format'
-import { batchPhase, statusInfo } from '../lib/status'
+import { HEALTH_SERIES } from '../lib/chart'
+import { batchPhase, batchTone, statusInfo } from '../lib/status'
+import type { Navigate } from '../lib/useRoute'
 import type { CronWorkflow, ImageResult } from '../types'
-
-type Filter = 'all' | 'running' | 'failed' | 'missing' | 'suspended'
 
 const TIMELINE_HOURS = 24
 const IMAGE_SEVERITY = ['missing', 'error', 'checking', 'unknown', 'exist']
 
-const FILTERS: Record<Filter, (workflow: CronWorkflow) => boolean> = {
-  all: () => true,
-  running: (w) => batchPhase(w) === 'running',
-  failed: (w) => ['failed', 'error'].includes(batchPhase(w)),
-  missing: (w) => w.images.some((image) => image.status === 'missing'),
-  suspended: (w) => w.suspended,
+const phaseIs = (...phases: string[]) => (w: CronWorkflow) => phases.includes(batchPhase(w))
+
+/** Filters reachable from the KPI tiles, the donut and the overview; the key is kept in the URL. */
+const FILTERS: Record<string, { label: string; match: (workflow: CronWorkflow) => boolean }> = {
+  all: { label: 'Tümü', match: () => true },
+  succeeded: { label: 'Son çalışma başarılı', match: phaseIs('succeeded') },
+  failed: { label: 'Son çalışma başarısız / hata', match: phaseIs('failed', 'error') },
+  running: { label: 'Çalışıyor', match: phaseIs('running') },
+  pending: { label: 'Bekliyor', match: phaseIs('pending') },
+  none: { label: 'Hiç çalışmamış', match: phaseIs('none') },
+  missing: { label: 'Image Nexus’ta yok', match: (w) => w.images.some((image) => image.status === 'missing') },
+  noimage: { label: 'Kontrol edilecek image yok', match: (w) => w.images.length === 0 },
+  suspended: { label: 'Askıda', match: (w) => w.suspended },
+  ...Object.fromEntries(HEALTH_SERIES.map((s) => [s.key, { label: s.label, match: (w: CronWorkflow) => batchTone(w) === s.key }])),
 }
 
 /** The worst image status of a workflow, for a one-badge summary. */
@@ -84,21 +93,24 @@ function WorkflowDetail({ workflow }: { workflow: CronWorkflow }) {
           {image.error ? <small className="issue">{image.error}</small> : null}
         </div>
         <StatusBadge value={image.status} />
-      </li>)}</ul> : <p className="muted">Proje image’ı bulunamadı.</p>}
+      </li>)}</ul> : <p className="muted">CronWorkflow’da veya son Workflow’unda adında <code>bch-</code> geçen, tag’li bir image yok; Nexus kontrolü yapılmaz.</p>}
     </section>
   </div>
 }
 
-export function Batch({ cronWorkflows, now }: { cronWorkflows: CronWorkflow[]; now: number }) {
-  const [filter, setFilter] = useState<Filter>('all')
+export function Batch({ cronWorkflows, now, namespace, filter, navigate }: {
+  cronWorkflows: CronWorkflow[]; now: number; namespace: string; filter: string; navigate: Navigate
+}) {
   const [query, setQuery] = useState('')
+  const active = FILTERS[filter] ?? FILTERS.all
 
-  const count = (key: Filter) => cronWorkflows.filter(FILTERS[key]).length
+  const count = (key: string) => cronWorkflows.filter(FILTERS[key].match).length
   const kpis = [
-    { key: 'all', label: 'CronWorkflow', value: cronWorkflows.length },
+    { key: 'all', label: 'CronWorkflow', value: cronWorkflows.length, sub: 'Cluster’daki tümü' },
     { key: 'running', label: 'Çalışıyor', value: count('running'), tone: 'info' as const },
     { key: 'failed', label: 'Son çalışma başarısız', value: count('failed'), tone: 'critical' as const },
-    { key: 'missing', label: 'Eksik image', value: count('missing'), tone: 'critical' as const },
+    { key: 'missing', label: 'Image Nexus’ta yok', value: count('missing'), tone: 'critical' as const },
+    { key: 'noimage', label: 'Image kontrolü yok', value: count('noimage'), sub: 'bch- image bulunamadı' },
     { key: 'suspended', label: 'Askıda', value: count('suspended') },
   ]
 
@@ -119,20 +131,23 @@ export function Batch({ cronWorkflows, now }: { cronWorkflows: CronWorkflow[]; n
     return { key: `${w.namespace}/${w.name}`, label: w.name, detail: `${w.namespace} · ${formatTime(new Date(at))}`, at }
   }), [cronWorkflows])
 
-  const visible = useMemo(() => cronWorkflows.filter((w) => FILTERS[filter](w) && matchesQuery(query, w.name, w.namespace)), [cronWorkflows, filter, query])
+  const visible = useMemo(() => cronWorkflows.filter((w) => active.match(w) && matchesQuery(query, w.name, w.namespace)), [cronWorkflows, active, query])
 
   return <div className="page">
-    <KpiRow items={kpis} active={filter} onSelect={(key) => setFilter(key as Filter)} />
+    <KpiRow items={kpis} active={filter} onSelect={(key) => navigate({ filter: key })} />
     <div className="grid-2 grid-wide-right">
-      <Panel title="Son çalışma durumu" subtitle="CronWorkflow başına son çalışmanın sonucu">
-        <Donut slices={slices} centerLabel="CronWorkflow" />
+      <Panel title="Son çalışma durumu" subtitle="CronWorkflow başına son çalışmanın sonucu · dilime tıklayınca liste filtrelenir">
+        <Donut slices={slices} centerLabel="CronWorkflow" selected={slices.some((s) => s.key === filter) ? filter : undefined}
+          onSelect={(key) => navigate({ filter: key === filter ? 'all' : key })} />
       </Panel>
-      <Panel title="Önümüzdeki 24 saat" subtitle="Planlanan çalışmalar">
-        <Timeline items={upcoming} now={now} hours={TIMELINE_HOURS} empty="Önümüzdeki 24 saatte planlanan çalışma yok." />
+      <Panel title="Önümüzdeki 24 saat" subtitle="Her nokta bir CronWorkflow’un sonraki çalışması · tıklayınca listede aranır">
+        <Timeline items={upcoming} now={now} hours={TIMELINE_HOURS} empty="Önümüzdeki 24 saatte planlanan çalışma yok."
+          onSelect={(item) => setQuery(item.label)} />
       </Panel>
     </div>
-    <Panel title="CronWorkflow’lar" subtitle={`${visible.length} / ${cronWorkflows.length} kayıt`}
+    <Panel title="CronWorkflow’lar" subtitle="Satırı açarak zamanlama, son Workflow, pod’lar ve image kontrolünü görün"
       actions={<SearchInput value={query} onChange={setQuery} placeholder="CronWorkflow veya namespace ara" />}>
+      <FilterBar namespace={namespace} filter={filter} filterLabel={active.label} shown={visible.length} total={cronWorkflows.length} navigate={navigate} />
       <DataTable rows={visible} columns={columns} rowKey={(w) => `${w.namespace}/${w.name}`} detail={(w) => <WorkflowDetail workflow={w} />}
         empty="Bu filtrelerle eşleşen CronWorkflow yok." />
     </Panel>

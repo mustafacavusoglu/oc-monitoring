@@ -7,7 +7,7 @@ const TICK_HOURS = 4
 const MIN_GAP_PERCENT = 2.5
 
 /** Upcoming events on a now → now+hours axis; overlapping dots move to new lanes. */
-export function Timeline({ items, now, hours, empty }: { items: TimelineItem[]; now: number; hours: number; empty: string }) {
+export function Timeline({ items, now, hours, empty, onSelect }: { items: TimelineItem[]; now: number; hours: number; empty: string; onSelect?: (item: TimelineItem) => void }) {
   const tip = useTip()
   const span = hours * 3_600_000
   const placed = items
@@ -28,6 +28,7 @@ export function Timeline({ items, now, hours, empty }: { items: TimelineItem[]; 
       {ticks.map((hour) => <span key={hour} className="timeline-grid" style={{ left: `${(hour / hours) * 100}%` }} />)}
       {placed.map((item) => <button key={item.key} type="button" className="timeline-dot"
         style={{ left: `${item.left}%`, top: `${item.lane * 16 + 4}px` }} aria-label={`${item.label} ${item.detail}`}
+        onClick={() => onSelect?.(item)}
         onMouseMove={(event) => tip.show(event, <><strong>{item.label}</strong><span>{item.detail}</span></>)}
         onMouseLeave={tip.hide} />)}
     </div>

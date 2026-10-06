@@ -18,12 +18,13 @@ const (
 	cronWorkflowLabel = "workflows.argoproj.io/cron-workflow"
 	workflowLabel     = "workflows.argoproj.io/workflow"
 	scheduledTimeAnno = "workflows.argoproj.io/scheduled-time"
-	emptyImageRef     = "(empty image reference)"
 )
 
 var cronParser = cron.NewParser(cron.Minute | cron.Hour | cron.Dom | cron.Month | cron.Dow | cron.Descriptor)
 
-func BuildViews(cronWorkflows, workflows, pods []*unstructured.Unstructured, now time.Time) []model.CronWorkflow {
+// BuildViews builds a row per CronWorkflow. imagePrefix (e.g. "bch-") marks the
+// image repository segment that names the Nexus repository to check.
+func BuildViews(cronWorkflows, workflows, pods []*unstructured.Unstructured, imagePrefix string, now time.Time) []model.CronWorkflow {
 	workflowsByCron := groupByLabel(workflows, cronWorkflowLabel)
 	podsByWorkflow := groupByLabel(pods, workflowLabel)
 
@@ -52,7 +53,12 @@ func BuildViews(cronWorkflows, workflows, pods []*unstructured.Unstructured, now
 			view.LastRun = &latest
 		}
 
-		view.Images = projectImages(cronWorkflow.Object, view.Namespace)
+		view.Images = projectImages(imagePrefix, cronWorkflow.Object["spec"])
+		if len(view.Images) == 0 && len(runs) > 0 {
+			// A workflowTemplateRef keeps the images out of the CronWorkflow; the
+			// last Workflow stores the resolved template spec.
+			view.Images = projectImages(imagePrefix, runs[0].Object["spec"], runs[0].Object["status"])
+		}
 		if !view.Suspended {
 			view.NextScheduledAt, view.ScheduleError = nextScheduledTime(view.Schedules, view.Timezone, now)
 		}
@@ -81,38 +87,72 @@ func groupByLabel(objects []*unstructured.Unstructured, label string) map[string
 	return groups
 }
 
-// projectImages returns the workflowSpec images whose name contains the
-// project namespace; only those are checked against the registry.
-func projectImages(cronWorkflow map[string]any, namespace string) []model.ImageResult {
+// projectImages finds every image reference with a "<prefix><project>"
+// repository segment anywhere in the given objects: container, script,
+// sidecar and init images, workflow parameter values (for templates that use
+// "{{workflow.parameters.image}}") or a stored template spec.
+// ponytail: matches any string that parses as such an image; tighten to known
+// fields if a non-image string ever looks like one.
+func projectImages(prefix string, objects ...any) []model.ImageResult {
 	results := make([]model.ImageResult, 0)
-	for _, image := range templateImages(cronWorkflow, "spec", "workflowSpec", "templates") {
-		if imageBelongsToProject(image, namespace) {
-			results = append(results, model.ImageResult{Reference: image, ImageID: imageIDFromReference(image), Status: model.ImageUnknown})
+	seen := make(map[string]bool)
+	var walk func(any)
+	walk = func(value any) {
+		switch v := value.(type) {
+		case map[string]any:
+			for _, item := range v {
+				walk(item)
+			}
+		case []any:
+			for _, item := range v {
+				walk(item)
+			}
+		case string:
+			reference := strings.TrimSpace(v)
+			if seen[reference] {
+				return
+			}
+			if project, imageID := projectImage(reference, prefix); project != "" {
+				seen[reference] = true
+				results = append(results, model.ImageResult{Reference: reference, Project: project, ImageID: imageID, Status: model.ImageUnknown})
+			}
 		}
 	}
+	for _, object := range objects {
+		walk(object)
+	}
+	sort.Slice(results, func(i, j int) bool { return results[i].Reference < results[j].Reference })
 	return results
 }
 
-func imageBelongsToProject(image, namespace string) bool {
-	lastColon := strings.LastIndex(image, ":")
-	if lastColon > strings.LastIndex(image, "/") {
-		image = image[:lastColon]
+// projectImage returns the project named by the repository segment that
+// starts with prefix, and the image tag or digest:
+// registry.company.com/mlops/bch-yazi-girisi:ald73 → ("yazi-girisi", "ald73").
+// A reference without a tag or digest, or with spaces or templating, is not
+// an image to check.
+func projectImage(reference, prefix string) (project, imageID string) {
+	if reference == "" || strings.ContainsAny(reference, " \t\n{}") {
+		return "", ""
 	}
-	return strings.Contains(strings.ToLower(image), strings.ToLower(namespace))
-}
-
-func imageIDFromReference(image string) string {
-	if image == emptyImageRef {
-		return ""
+	ref := strings.ToLower(reference)
+	if at := strings.LastIndex(ref, "@"); at >= 0 {
+		ref, imageID = ref[:at], ref[at+1:]
+	} else if colon := strings.LastIndex(ref, ":"); colon > strings.LastIndex(ref, "/") {
+		ref, imageID = ref[:colon], ref[colon+1:]
 	}
-	if at := strings.LastIndex(image, "@"); at > 0 {
-		return image[:at]
+	if imageID == "" {
+		return "", ""
 	}
-	lastColon := strings.LastIndex(image, ":")
-	if lastColon < 0 || lastColon < strings.LastIndex(image, "/") {
-		return ""
+	segments := strings.Split(ref, "/")
+	if len(segments) > 1 && strings.ContainsAny(segments[0], ".:") {
+		segments = segments[1:] // registry host
 	}
-	return strings.TrimSpace(image[lastColon+1:])
+	for _, segment := range segments {
+		if len(segment) > len(prefix) && strings.HasPrefix(segment, prefix) {
+			return strings.TrimPrefix(segment, prefix), imageID
+		}
+	}
+	return "", ""
 }
 
 func runSummary(workflow *unstructured.Unstructured) model.RunSummary {
@@ -199,54 +239,4 @@ func nextScheduledTime(schedules []string, timezone string, now time.Time) (*tim
 		return &earliest, "timezone unset; next run assumes UTC"
 	}
 	return &earliest, ""
-}
-
-func templateImages(object map[string]any, path ...string) []string {
-	templates, _, _ := unstructured.NestedFieldNoCopy(object, path...)
-	items, _ := templates.([]any)
-	images := make([]string, 0)
-	for _, rawTemplate := range items {
-		template, ok := rawTemplate.(map[string]any)
-		if !ok {
-			continue
-		}
-		for _, field := range []string{"container", "script"} {
-			if image, found, _ := unstructured.NestedString(template, field, "image"); found {
-				images = appendImage(images, image)
-			}
-		}
-		for _, field := range [][]string{{"sidecars"}, {"initContainers"}, {"containerSet", "containers"}} {
-			containers, _, _ := unstructured.NestedFieldNoCopy(template, field...)
-			list, _ := containers.([]any)
-			for _, item := range list {
-				if container, ok := item.(map[string]any); ok {
-					if image, found, _ := unstructured.NestedString(container, "image"); found {
-						images = appendImage(images, image)
-					}
-				}
-			}
-		}
-	}
-	return uniqueSorted(images)
-}
-
-func appendImage(images []string, image string) []string {
-	image = strings.TrimSpace(image)
-	if image == "" {
-		image = emptyImageRef
-	}
-	return append(images, image)
-}
-
-func uniqueSorted(values []string) []string {
-	seen := make(map[string]struct{}, len(values))
-	unique := make([]string, 0, len(values))
-	for _, value := range values {
-		if _, found := seen[value]; !found {
-			seen[value] = struct{}{}
-			unique = append(unique, value)
-		}
-	}
-	sort.Strings(unique)
-	return unique
 }

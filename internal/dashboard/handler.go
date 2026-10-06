@@ -73,14 +73,10 @@ func (h *Handler) snapshot(ctx context.Context, now time.Time) model.DashboardRe
 	podSnapshot := h.sources.Pods()
 	objects, pods := clusterSnapshot.Objects, podSnapshot.Objects[cluster.Pods]
 	res := h.cfg.Resources
-	projectNamespaces := toSet(projectSnapshot.AllNamespaces())
 
-	cronWorkflows := batch.BuildViews(
-		inNamespaces(objects[res.CronWorkflows], projectNamespaces),
-		inNamespaces(objects[res.Workflows], projectNamespaces),
-		pods,
-		now,
-	)
+	// Everything comes from the cluster; the project file only names namespaces.
+	cronWorkflows := batch.BuildViews(objects[res.CronWorkflows], objects[res.Workflows], pods,
+		strings.ToLower(h.cfg.BatchServingKeyword)+"-", now)
 	models := serving.BuildModels(
 		objects[res.InferenceServices],
 		objects[res.ServingRuntimes],
@@ -105,13 +101,12 @@ func (h *Handler) snapshot(ctx context.Context, now time.Time) model.DashboardRe
 			Projects: projectHealth,
 			Cluster:  clusterSnapshot.Health,
 			Pods:     podSnapshot.Health,
-			Registry: batch.ResolveImages(ctx, cronWorkflows, toSet(projectSnapshot.BatchNamespaces()), h.sources.Images),
+			Registry: batch.ResolveImages(ctx, cronWorkflows, h.sources.Images),
 		},
-		Namespaces:      namespaces(projectSnapshot.AllNamespaces(), models),
-		Projects:        coverage(projectSnapshot.Projects, objects, res, pods),
-		Models:          models,
-		CronWorkflows:   cronWorkflows,
-		OutsideProjects: outside(objects[res.CronWorkflows], projectNamespaces),
+		Namespaces:    namespaces(projectSnapshot.AllNamespaces(), models, cronWorkflows),
+		Projects:      coverage(projectSnapshot.Projects, objects, res, pods),
+		Models:        models,
+		CronWorkflows: cronWorkflows,
 	}
 }
 
@@ -150,36 +145,18 @@ func toSet(values []string) map[string]bool {
 	return set
 }
 
-func outside(objects []*unstructured.Unstructured, namespaces map[string]bool) []string {
-	names := []string{}
-	for _, object := range objects {
-		if !namespaces[object.GetNamespace()] {
-			names = append(names, cluster.Key(object.GetNamespace(), object.GetName()))
-		}
-	}
-	sort.Strings(names)
-	return names
-}
-
-func inNamespaces(objects []*unstructured.Unstructured, namespaces map[string]bool) []*unstructured.Unstructured {
-	var kept []*unstructured.Unstructured
-	for _, object := range objects {
-		if namespaces[object.GetNamespace()] {
-			kept = append(kept, object)
-		}
-	}
-	return kept
-}
-
-// namespaces lists every namespace the UI can filter by: watched project
-// namespaces plus the namespaces that host a model.
-func namespaces(projectNamespaces []string, models []model.Model) []string {
+// namespaces lists every namespace the UI can filter by: project namespaces
+// plus every namespace that hosts a model or a CronWorkflow.
+func namespaces(projectNamespaces []string, models []model.Model, cronWorkflows []model.CronWorkflow) []string {
 	seen := make(map[string]struct{}, len(projectNamespaces)+len(models))
 	for _, namespace := range projectNamespaces {
 		seen[namespace] = struct{}{}
 	}
 	for _, m := range models {
 		seen[m.Namespace] = struct{}{}
+	}
+	for _, w := range cronWorkflows {
+		seen[w.Namespace] = struct{}{}
 	}
 	result := make([]string, 0, len(seen))
 	for namespace := range seen {

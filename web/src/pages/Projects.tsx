@@ -1,19 +1,19 @@
 import { useMemo, useState } from 'react'
+import { FilterBar } from '../components/FilterBar'
 import { DataTable, NameCell, type Column } from '../components/DataTable'
 import { KpiRow } from '../components/Kpi'
 import { Panel } from '../components/Panel'
 import { SearchInput } from '../components/SearchInput'
 import { matchesQuery } from '../lib/format'
 import { projectGap } from '../lib/status'
+import type { Navigate } from '../lib/useRoute'
 import type { Project } from '../types'
 
-type Filter = 'all' | 'batch' | 'custom' | 'gap'
-
-const FILTERS: Record<Filter, (project: Project) => boolean> = {
-  all: () => true,
-  batch: (p) => p.batch,
-  custom: (p) => p.customServe,
-  gap: (p) => projectGap(p) !== undefined,
+const FILTERS: Record<string, { label: string; match: (project: Project) => boolean }> = {
+  all: { label: 'Tümü', match: () => true },
+  batch: { label: 'BCH projesi', match: (p) => p.batch },
+  custom: { label: 'Custom Serve projesi', match: (p) => p.customServe },
+  gap: { label: 'Kaynağı eksik', match: (p) => projectGap(p) !== undefined },
 }
 
 const count = (value: number) => value || <span className="muted">0</span>
@@ -39,26 +39,24 @@ const columns: Column<Project>[] = [
 ]
 
 /** Every project from the project JSON next to what the cluster holds, so gaps are visible. */
-export function Projects({ projects, outside }: { projects: Project[]; outside: string[] }) {
-  const [filter, setFilter] = useState<Filter>('all')
+export function Projects({ projects, namespace, filter, navigate }: { projects: Project[]; namespace: string; filter: string; navigate: Navigate }) {
   const [query, setQuery] = useState('')
+  const active = FILTERS[filter] ?? FILTERS.all
   const kpis = [
     { key: 'all', label: 'Proje', value: projects.length, sub: 'Proje JSON’undan' },
-    { key: 'batch', label: 'BCH projesi', value: projects.filter(FILTERS.batch).length, sub: 'Nexus image kontrolü yapılır' },
-    { key: 'custom', label: 'Custom Serve projesi', value: projects.filter(FILTERS.custom).length },
-    { key: 'gap', label: 'Kaynağı eksik', value: projects.filter(FILTERS.gap).length, sub: 'Namespace veya kaynak yok', tone: 'critical' as const },
+    { key: 'batch', label: 'BCH projesi', value: projects.filter(FILTERS.batch.match).length, sub: 'Nexus image kontrolü yapılır' },
+    { key: 'custom', label: 'Custom Serve projesi', value: projects.filter(FILTERS.custom.match).length },
+    { key: 'gap', label: 'Kaynağı eksik', value: projects.filter(FILTERS.gap.match).length, sub: 'Namespace veya kaynak yok', tone: 'critical' as const },
   ]
-  const visible = useMemo(() => projects.filter((p) => FILTERS[filter](p) && matchesQuery(query, p.key, p.namespace)), [projects, filter, query])
+  const visible = useMemo(() => projects.filter((p) => active.match(p) && matchesQuery(query, p.key, p.namespace)), [projects, active, query])
 
   return <div className="page">
-    <KpiRow items={kpis} active={filter} onSelect={(key) => setFilter(key as Filter)} />
-    <Panel title="Proje kapsamı" subtitle={`${visible.length} / ${projects.length} proje · namespace = proje anahtarı (küçük harf, _ → -)`}
+    <KpiRow items={kpis} active={filter} onSelect={(key) => navigate({ filter: key })} />
+    <Panel title="Proje kapsamı" subtitle="Proje JSON’undaki her proje ve namespace’inde bulunanlar · namespace = proje anahtarı (küçük harf, _ → -)"
       actions={<SearchInput value={query} onChange={setQuery} placeholder="Proje veya namespace ara" />}>
+      <FilterBar namespace={namespace} filter={filter} filterLabel={active.label} shown={visible.length} total={projects.length} navigate={navigate} />
       <DataTable rows={visible} columns={columns} rowKey={(p) => p.key} empty="Bu filtrelerle eşleşen proje yok."
         initialSort={{ key: 'gap', direction: 1 }} />
     </Panel>
-    {outside.length ? <Panel title="Proje namespace’i dışındaki CronWorkflow’lar" subtitle={`${outside.length} CronWorkflow · namespace’i proje JSON’unda yok, dashboard’da gösterilmez`}>
-      <ul className="plain-list">{outside.map((name) => <li key={name}><code>{name}</code></li>)}</ul>
-    </Panel> : null}
   </div>
 }

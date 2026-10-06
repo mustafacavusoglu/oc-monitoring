@@ -31,7 +31,7 @@ function initialTheme(): Theme {
 
 export default function App() {
   const { data, error, refreshing, refresh } = useDashboard()
-  const [{ page, namespace }, navigate] = useRoute()
+  const [{ page, namespace, filter }, navigate] = useRoute()
   const [theme, setTheme] = useState(initialTheme)
   const [menuOpen, setMenuOpen] = useState(false)
 
@@ -39,6 +39,9 @@ export default function App() {
     document.documentElement.dataset.theme = theme
     try { localStorage.setItem(THEME_KEY, theme) } catch { /* storage may be unavailable */ }
   }, [theme])
+
+  // A new page starts at the top; filtering within a page keeps the scroll position.
+  useEffect(() => { window.scrollTo(0, 0) }, [page])
 
   const { models, cronWorkflows, projects } = useMemo(() => {
     const inScope = <T extends { namespace: string }>(items: T[] = []) =>
@@ -78,10 +81,10 @@ export default function App() {
           <div key={key} className="notice notice-warning" role="status"><strong>{SOURCE_LABELS[key]}:</strong> {data.sources[key].error}</div>) : null}
         {error ? <div className="notice" role="alert">Veri yenilenemedi: {error}{data ? ' · Son alınan veriler gösteriliyor.' : ''}</div> : null}
         {!data ? (error ? null : <div className="loading">Veriler yükleniyor…</div>)
-          : page === 'overview' ? <Overview models={models} cronWorkflows={cronWorkflows} onNavigate={goTo} />
-          : page === 'batch' ? <Batch cronWorkflows={cronWorkflows} now={Date.parse(data.generatedAt)} />
-          : page === 'projects' ? <Projects projects={projects} outside={data.outsideProjects ?? []} />
-          : <Models key={page} type={page} models={models.filter((m) => m.type === page)} />}
+          : page === 'overview' ? <Overview models={models} cronWorkflows={cronWorkflows} namespace={namespace} navigate={navigate} />
+          : page === 'batch' ? <Batch cronWorkflows={cronWorkflows} now={Date.parse(data.generatedAt)} namespace={namespace} filter={filter} navigate={navigate} />
+          : page === 'projects' ? <Projects projects={projects} namespace={namespace} filter={filter} navigate={navigate} />
+          : <Models key={page} type={page} models={models.filter((m) => m.type === page)} namespace={namespace} filter={filter} navigate={navigate} />}
       </main>
     </div>
   </div>

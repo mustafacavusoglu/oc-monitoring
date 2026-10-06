@@ -4,6 +4,7 @@ import (
 	"compress/gzip"
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"reflect"
@@ -58,13 +59,19 @@ func TestDashboardEndpointCombinesBatchAndModels(t *testing.T) {
 	cron := object("argoproj.io/v1alpha1", "CronWorkflow", "payments", "daily-job", map[string]any{
 		"schedule": "0 12 * * *",
 		"workflowSpec": map[string]any{"templates": []any{
-			map[string]any{"name": "run", "container": map[string]any{"image": "registry.example.test/payments/app:v1"}},
+			map[string]any{"name": "run", "container": map[string]any{"image": "registry.example.test/mlops/bch-payments:v1"}},
 		}},
 	})
-	otherTeam := cron.DeepCopy()
-	otherTeam.SetNamespace("other-team")
-	cmCron := cron.DeepCopy()
-	cmCron.SetNamespace("cm-proje")
+	withImage := func(namespace, image string) *unstructured.Unstructured {
+		copy := cron.DeepCopy()
+		copy.SetNamespace(namespace)
+		copy.Object["spec"].(map[string]any)["workflowSpec"] = map[string]any{"templates": []any{
+			map[string]any{"name": "run", "container": map[string]any{"image": image}},
+		}}
+		return copy
+	}
+	otherTeam := withImage("other-team", "busybox:1.36")
+	cmCron := withImage("cm-proje", "registry.example.test/cm/app:v2")
 	runtime := object("serving.kserve.io/v1alpha1", "ServingRuntime", "chatbot", "vllm", map[string]any{
 		"containers": []any{map[string]any{"image": "quay.io/vllm/vllm-openai:0.6"}},
 	})
@@ -89,9 +96,10 @@ func TestDashboardEndpointCombinesBatchAndModels(t *testing.T) {
 		Pods:   func() cluster.Snapshot { return cluster.Snapshot{Health: model.SourceHealth{State: model.StateReady}} },
 		Images: fakeImages{t},
 	}, config.Config{
-		Resources:         resources,
-		Serving:           config.ServingRules{LLMImageKeywords: []string{"vllm"}, MLImageKeywords: []string{"triton"}},
-		UIRefreshInterval: 30 * time.Second,
+		Resources:           resources,
+		BatchServingKeyword: "BCH",
+		Serving:             config.ServingRules{LLMImageKeywords: []string{"vllm"}, MLImageKeywords: []string{"triton"}},
+		UIRefreshInterval:   30 * time.Second,
 	})
 
 	req := httptest.NewRequest(http.MethodGet, "/api/dashboard", nil)
@@ -113,20 +121,21 @@ func TestDashboardEndpointCombinesBatchAndModels(t *testing.T) {
 	if response.RefreshIntervalSeconds != 30 {
 		t.Fatalf("refresh interval = %d, want 30", response.RefreshIntervalSeconds)
 	}
-	// Every project's CronWorkflows are shown; only BCH projects get Nexus checks.
-	if len(response.CronWorkflows) != 2 || response.CronWorkflows[0].Namespace != "cm-proje" || len(response.CronWorkflows[0].Images) != 0 {
-		t.Fatalf("cron workflows = %#v, want cm-proje (no image check) and payments", response.CronWorkflows)
+	// Every CronWorkflow in the cluster is shown; images with a bch- segment are checked.
+	var rows []string
+	for _, row := range response.CronWorkflows {
+		rows = append(rows, fmt.Sprintf("%s:%d", row.Namespace, len(row.Images)))
 	}
-	if response.CronWorkflows[1].Images[0].Status != model.ImageExist || response.Sources.Registry.State != model.StateReady {
-		t.Fatalf("payments images = %#v, registry = %#v", response.CronWorkflows[1].Images, response.Sources.Registry)
+	if want := []string{"cm-proje:0", "other-team:0", "payments:1"}; !reflect.DeepEqual(rows, want) {
+		t.Fatalf("cron workflows (namespace:images) = %v, want %v", rows, want)
+	}
+	if response.CronWorkflows[2].Images[0].Status != model.ImageExist || response.Sources.Registry.State != model.StateReady {
+		t.Fatalf("payments images = %#v, registry = %#v", response.CronWorkflows[2].Images, response.Sources.Registry)
 	}
 	if len(response.Models) != 1 || response.Models[0].Type != model.TypeLLM || response.Models[0].Name != "llama" {
 		t.Fatalf("models = %#v", response.Models)
 	}
-	if want := []string{"other-team/daily-job"}; !reflect.DeepEqual(response.OutsideProjects, want) {
-		t.Fatalf("outside projects = %v, want %v", response.OutsideProjects, want)
-	}
-	if want := []string{"chatbot", "cm-proje", "ghost", "payments"}; !reflect.DeepEqual(response.Namespaces, want) {
+	if want := []string{"chatbot", "cm-proje", "ghost", "other-team", "payments"}; !reflect.DeepEqual(response.Namespaces, want) {
 		t.Fatalf("namespaces = %v, want %v", response.Namespaces, want)
 	}
 	// Coverage shows the project without a namespace instead of hiding it.

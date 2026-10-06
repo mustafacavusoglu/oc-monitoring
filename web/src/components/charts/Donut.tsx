@@ -8,8 +8,10 @@ const RADIUS = 46
 const CIRCUMFERENCE = 2 * Math.PI * RADIUS
 const GAP = 2
 
-/** Part-to-whole for a handful of categories, with a direct-labelled legend. */
-export function Donut({ slices, centerLabel }: { slices: Slice[]; centerLabel: string }) {
+/** Part-to-whole for a handful of categories; slices and legend rows filter the page when clicked. */
+export function Donut({ slices, centerLabel, onSelect, selected }: {
+  slices: Slice[]; centerLabel: string; onSelect?: (key: string) => void; selected?: string
+}) {
   const tip = useTip()
   const total = slices.reduce((sum, slice) => sum + slice.value, 0)
   const visible = slices.filter((slice) => slice.value > 0)
@@ -22,8 +24,10 @@ export function Donut({ slices, centerLabel }: { slices: Slice[]; centerLabel: s
         const length = (slice.value / total) * CIRCUMFERENCE
         const dash = visible.length > 1 ? Math.max(length - GAP, 0.5) : length
         const circle = <circle key={slice.key} cx="60" cy="60" r={RADIUS} stroke={slice.color}
-          strokeDasharray={`${dash} ${CIRCUMFERENCE - dash}`} strokeDashoffset={-offset} className="donut-slice"
-          onMouseMove={(event) => tip.show(event, <><strong>{slice.label}</strong><span>{slice.value} · %{Math.round((slice.value / total) * 100)}</span></>)}
+          strokeDasharray={`${dash} ${CIRCUMFERENCE - dash}`} strokeDashoffset={-offset}
+          className={`donut-slice ${selected && selected !== slice.key ? 'dimmed' : ''} ${onSelect ? 'clickable' : ''}`}
+          onClick={() => onSelect?.(slice.key)}
+          onMouseMove={(event) => tip.show(event, <><strong>{slice.label}</strong><span>{slice.value} · %{Math.round((slice.value / total) * 100)}</span>{onSelect ? <small>Filtrelemek için tıklayın</small> : null}</>)}
           onMouseLeave={tip.hide} />
         offset += length
         return circle
@@ -32,10 +36,12 @@ export function Donut({ slices, centerLabel }: { slices: Slice[]; centerLabel: s
       <text x="60" y="74" className="donut-label">{centerLabel}</text>
     </svg>
     <ul className="donut-legend">
-      {slices.map((slice) => <li key={slice.key}>
-        <span className="swatch" style={{ background: slice.color }} />
-        <span>{slice.label}</span>
-        <strong>{formatNumber(slice.value)}</strong>
+      {slices.map((slice) => <li key={slice.key} className={selected && selected !== slice.key ? 'dimmed' : ''}>
+        <button type="button" disabled={!onSelect || !slice.value} onClick={() => onSelect?.(slice.key)} aria-pressed={selected === slice.key}>
+          <span className="swatch" style={{ background: slice.color }} />
+          <span>{slice.label}</span>
+          <strong>{formatNumber(slice.value)}</strong>
+        </button>
       </li>)}
     </ul>
     {tip.node}

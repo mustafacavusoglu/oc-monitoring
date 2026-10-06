@@ -65,9 +65,9 @@ export function projectGap(project: Project): string | undefined {
   return undefined
 }
 
-/** Health bucket used by the overview chart; tone doubles as the bucket key. */
+/** Health bucket used by the charts and filters; tone doubles as the bucket key. */
 export function modelTone(model: Model): Tone {
-  return statusInfo(model.state).tone
+  return modelIssues(model).length ? 'critical' : statusInfo(model.state).tone
 }
 
 export function batchTone(workflow: CronWorkflow): Tone {

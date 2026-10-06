@@ -1,4 +1,5 @@
 import { useMemo, useState } from 'react'
+import { FilterBar } from '../components/FilterBar'
 import { DataTable, NameCell, type Column } from '../components/DataTable'
 import { DetailList } from '../components/DetailList'
 import { KpiRow, type KpiItem } from '../components/Kpi'
@@ -7,21 +8,24 @@ import { PodList } from '../components/PodList'
 import { SearchInput } from '../components/SearchInput'
 import { StatusBadge } from '../components/StatusBadge'
 import { StackedBars } from '../components/charts/StackedBars'
-import { HEALTH_SERIES, TYPE_SERIES, groupRows } from '../lib/chart'
+import { HEALTH_SERIES, TYPE_SERIES, groupRows, namespacePick, namespaceSelection } from '../lib/chart'
 import { formatDateTime, formatRelative, matchesQuery } from '../lib/format'
 import { acceleratorLabel, allocatedGpu, allocatedMig, modelTone, unhealthyPods, usesAccelerator } from '../lib/status'
+import type { Navigate } from '../lib/useRoute'
 import type { Model, ModelType } from '../types'
-
-type Filter = 'all' | 'Ready' | 'NotReady' | 'gpu' | 'pods'
 
 const NAMESPACE_ROWS = 8
 
-const FILTERS: Record<Filter, (model: Model) => boolean> = {
-  all: () => true,
-  Ready: (model) => model.state === 'Ready',
-  NotReady: (model) => model.state !== 'Ready',
-  gpu: usesAccelerator,
-  pods: (model) => unhealthyPods(model) > 0,
+const HEALTH = HEALTH_SERIES.filter((s) => s.key !== 'info')
+
+/** Filters reachable from the KPI tiles and charts; the key is kept in the URL. */
+const FILTERS: Record<string, { label: string; match: (model: Model) => boolean }> = {
+  all: { label: 'Tümü', match: () => true },
+  Ready: { label: 'Hazır', match: (m) => m.state === 'Ready' },
+  NotReady: { label: 'Hazır değil', match: (m) => m.state !== 'Ready' },
+  gpu: { label: 'GPU / MIG kullanan', match: usesAccelerator },
+  pods: { label: 'Sorunlu pod’u olan', match: (m) => unhealthyPods(m) > 0 },
+  ...Object.fromEntries(HEALTH.map((s) => [s.key, { label: s.label, match: (m: Model) => modelTone(m) === s.key }])),
 }
 
 const replicas = (model: Model) =>
@@ -74,12 +78,14 @@ function ModelDetail({ model }: { model: Model }) {
   </div>
 }
 
-export function Models({ type, models }: { type: ModelType; models: Model[] }) {
-  const [filter, setFilter] = useState<Filter>('all')
+export function Models({ type, models, namespace, filter, navigate }: {
+  type: ModelType; models: Model[]; namespace: string; filter: string; navigate: Navigate
+}) {
   const [query, setQuery] = useState('')
+  const active = FILTERS[filter] ?? FILTERS.all
   const color = TYPE_SERIES.find((series) => series.key === type)!.color
 
-  const ready = models.filter(FILTERS.Ready).length
+  const ready = models.filter(FILTERS.Ready.match).length
   const gpus = models.reduce((sum, model) => sum + allocatedGpu(model), 0)
   const migSlices = useMemo(() => models.flatMap((m) => allocatedMig(m).map((slice) => ({ ...slice, namespace: m.namespace }))), [models])
   const migTotal = migSlices.reduce((sum, slice) => sum + slice.count, 0)
@@ -88,32 +94,36 @@ export function Models({ type, models }: { type: ModelType; models: Model[] }) {
     { key: 'Ready', label: 'Hazır', value: ready, tone: 'good' as const },
     { key: 'NotReady', label: 'Hazır değil', value: models.length - ready, tone: 'critical' as const },
     type === 'custom'
-      ? { key: 'pods', label: 'Sorunlu pod’u olan', value: models.filter(FILTERS.pods).length, sub: 'Hazır olmayan pod', tone: 'critical' }
+      ? { key: 'pods', label: 'Sorunlu pod’u olan', value: models.filter(FILTERS.pods.match).length, sub: 'Hazır olmayan pod', tone: 'critical' }
       : { key: 'gpu', label: 'Ayrılan GPU', value: gpus, sub: migTotal ? `+ ${migTotal} MIG dilimi` : 'min. replika × GPU' },
   ]
 
   const healthRows = useMemo(() => groupRows(models, (m) => m.namespace, modelTone, NAMESPACE_ROWS), [models])
   const gpuRows = useMemo(() => groupRows(models, (m) => m.namespace, () => 'gpu', NAMESPACE_ROWS, allocatedGpu), [models])
   const migRows = useMemo(() => groupRows(migSlices, (s) => s.profile, () => 'mig', NAMESPACE_ROWS, (s) => s.count), [migSlices])
-  const visible = useMemo(() => models.filter((m) => FILTERS[filter](m) && matchesQuery(query, m.name, m.namespace, m.runtime, m.modelFormat)), [models, filter, query])
+  const visible = useMemo(() => models.filter((m) => active.match(m) && matchesQuery(query, m.name, m.namespace, m.runtime, m.modelFormat)), [models, active, query])
 
   return <div className="page">
-    <KpiRow items={kpis} active={filter} onSelect={(key) => setFilter(key as Filter)} />
+    <KpiRow items={kpis} active={filter} onSelect={(key) => navigate({ filter: key })} />
     <div className="grid-2">
-      <Panel title="Namespace bazında durum" subtitle="Hazır / sorunlu model sayısı">
-        <StackedBars rows={healthRows} series={HEALTH_SERIES.filter((s) => s.key !== 'info')} empty="Model bulunamadı." />
+      <Panel title="Namespace bazında durum" subtitle="Sağlıklı / sorunlu model sayısı · çubuğa tıklayınca liste filtrelenir">
+        <StackedBars rows={healthRows} series={HEALTH} empty="Model bulunamadı."
+          selected={namespaceSelection(namespace, filter, HEALTH.map((s) => s.key))}
+          onSelect={(pick) => navigate({ ...namespacePick(pick), filter: pick.series ?? 'all' })} />
       </Panel>
-      <Panel title="GPU / MIG dağılımı" subtitle="Minimum replikada ayrılan tam GPU ve MIG dilimleri">
+      <Panel title="GPU / MIG dağılımı" subtitle="Minimum replikada ayrılan tam GPU ve MIG dilimleri · tıklayınca liste filtrelenir">
         <h3 className="chart-heading">Tam GPU · namespace bazında</h3>
-        <StackedBars rows={gpuRows} series={[{ key: 'gpu', label: 'GPU', color }]} empty="Tam GPU kullanan model yok." />
+        <StackedBars rows={gpuRows} series={[{ key: 'gpu', label: 'GPU', color }]} empty="Tam GPU kullanan model yok."
+          selected={namespaceSelection(namespace, filter, ['gpu'])} onSelect={(pick) => navigate({ ...namespacePick(pick), filter: 'gpu' })} />
         {migRows.length ? <>
           <h3 className="chart-heading">MIG dilimleri · profil bazında</h3>
-          <StackedBars rows={migRows} series={[{ key: 'mig', label: 'MIG dilimi', color }]} empty="" />
+          <StackedBars rows={migRows} series={[{ key: 'mig', label: 'MIG dilimi', color }]} empty="" onSelect={() => navigate({ filter: 'gpu' })} />
         </> : null}
       </Panel>
     </div>
-    <Panel title="Modeller" subtitle={`${visible.length} / ${models.length} model`}
+    <Panel title="Modeller" subtitle="Satırı açarak runtime, image, endpoint ve pod ayrıntılarını görün"
       actions={<SearchInput value={query} onChange={setQuery} placeholder="Model, namespace, runtime ara" />}>
+      <FilterBar namespace={namespace} filter={filter} filterLabel={active.label} shown={visible.length} total={models.length} navigate={navigate} />
       <DataTable rows={visible} columns={type === 'custom' ? [...columns.slice(0, 3), podsColumn, ...columns.slice(3)] : columns} rowKey={(m) => `${m.kind}/${m.namespace}/${m.name}`} detail={(m) => <ModelDetail model={m} />}
         empty="Bu filtrelerle eşleşen model yok." initialSort={{ key: 'state', direction: 1 }} />
     </Panel>

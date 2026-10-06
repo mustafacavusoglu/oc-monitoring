@@ -22,10 +22,12 @@ export function useDashboard() {
   const timer = useRef<number | undefined>(undefined)
   const controller = useRef<AbortController | null>(null)
   const missedWhileHidden = useRef(false)
+  const loaded = useRef(false)
 
   const refresh = useCallback(async () => {
     window.clearTimeout(timer.current)
-    if (document.hidden) {
+    // The first load always runs; later refreshes wait until the tab is visible.
+    if (document.hidden && loaded.current) {
       missedWhileHidden.current = true
       return
     }
@@ -37,6 +39,7 @@ export function useDashboard() {
     try {
       const response = await fetchDashboard(current.signal)
       setData(response)
+      loaded.current = true
       setError('')
       next = isSettling(response) ? FAST_REFRESH_MS : response.refreshIntervalSeconds * 1000
     } catch (cause) {

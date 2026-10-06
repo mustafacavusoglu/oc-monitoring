@@ -1,5 +1,7 @@
 export type ImageResult = {
   reference: string
+  /** Project named by the image's bch-<project> segment; used in the Nexus URL. */
+  project?: string
   imageId?: string
   url?: string
   status: string
@@ -106,6 +108,4 @@ export type DashboardResponse = {
   projects: Project[]
   models: Model[]
   cronWorkflows: CronWorkflow[]
-  /** "namespace/name" of CronWorkflows in no project's namespace. */
-  outsideProjects: string[]
 }

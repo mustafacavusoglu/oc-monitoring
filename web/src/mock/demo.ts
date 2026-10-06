@@ -256,7 +256,6 @@ export function createDemoDashboard(date: Date): DashboardResponse {
     sources: { projects: ok, cluster: ok, pods: ok, registry: { ...ok, lastSuccess: iso(now - 13 * MINUTE) } },
     namespaces: [...new Set([...models, ...cronWorkflows, ...projects].map((item) => item.namespace))].sort(),
     projects,
-    outsideProjects: ['argo/argo-cleanup', 'openshift-logging/log-rotate'],
     models,
     cronWorkflows,
   }

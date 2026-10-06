@@ -1,4 +1,5 @@
-import type { BarRow } from '../components/charts/StackedBars'
+import type { BarPick, BarRow } from '../components/charts/StackedBars'
+import { ALL_NAMESPACES, NO_FILTER, type Route } from './useRoute'
 import type { Series } from '../components/charts/Legend'
 
 /** Categorical slots 1-4 (adjacent-validated order), fixed per type on every chart. */
@@ -17,6 +18,16 @@ export const HEALTH_SERIES: Series[] = [
 ]
 
 const OTHER = 'Diğer'
+
+/** Route patch for a click on a namespace-by-X bar; the folded "Diğer" row keeps the namespace. */
+export const namespacePick = (pick: BarPick): Partial<Route> => (pick.row === OTHER ? {} : { namespace: pick.row })
+
+/** Highlight for a namespace-by-X bar from the current route. */
+export const namespaceSelection = (namespace: string, filter: string, seriesKeys: string[]): Partial<BarPick> | undefined => {
+  const row = namespace === ALL_NAMESPACES ? undefined : namespace
+  const series = filter !== NO_FILTER && seriesKeys.includes(filter) ? filter : undefined
+  return row || series ? { row, series } : undefined
+}
 
 /**
  * Groups items into bar rows by `group`, summing `weight` per `bucket`.

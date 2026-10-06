@@ -34,6 +34,7 @@ const (
 
 type ImageResult struct {
 	Reference string     `json:"reference"`
+	Project   string     `json:"project,omitempty"` // from the image's bch-<project> segment
 	ImageID   string     `json:"imageId,omitempty"`
 	URL       string     `json:"url,omitempty"`
 	Status    string     `json:"status"`
@@ -144,7 +145,4 @@ type DashboardResponse struct {
 	Projects               []Project      `json:"projects"`
 	Models                 []Model        `json:"models"`
 	CronWorkflows          []CronWorkflow `json:"cronWorkflows"`
-	// OutsideProjects lists "namespace/name" of CronWorkflows in namespaces
-	// that belong to no project, so the cluster total can be reconciled.
-	OutsideProjects []string `json:"outsideProjects"`
 }
