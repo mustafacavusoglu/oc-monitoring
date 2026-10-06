@@ -93,7 +93,7 @@ function WorkflowDetail({ workflow }: { workflow: CronWorkflow }) {
           {image.error ? <small className="issue">{image.error}</small> : null}
         </div>
         <StatusBadge value={image.status} />
-      </li>)}</ul> : <p className="muted">CronWorkflow’da veya son Workflow’unda adında <code>bch-</code> geçen, tag’li bir image yok; Nexus kontrolü yapılmaz.</p>}
+      </li>)}</ul> : <p className="muted">CronWorkflow’un <code>image:</code> alanlarında namespace’i (<code>{workflow.namespace}</code>) içeren, <code>:</code> ile tag’li bir image yok; Nexus kontrolü yapılmaz.</p>}
     </section>
   </div>
 }
@@ -110,7 +110,7 @@ export function Batch({ cronWorkflows, now, namespace, filter, navigate }: {
     { key: 'running', label: 'Çalışıyor', value: count('running'), tone: 'info' as const },
     { key: 'failed', label: 'Son çalışma başarısız', value: count('failed'), tone: 'critical' as const },
     { key: 'missing', label: 'Image Nexus’ta yok', value: count('missing'), tone: 'critical' as const },
-    { key: 'noimage', label: 'Image kontrolü yok', value: count('noimage'), sub: 'bch- image bulunamadı' },
+    { key: 'noimage', label: 'Image kontrolü yok', value: count('noimage'), sub: 'Namespace’i içeren image yok' },
     { key: 'suspended', label: 'Askıda', value: count('suspended') },
   ]
 

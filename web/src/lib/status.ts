@@ -60,8 +60,7 @@ export function modelIssues(model: Model): string[] {
 /** What a monitored project is missing in the cluster, if anything. */
 export function projectGap(project: Project): string | undefined {
   if (!project.namespaceExists) return 'Namespace yok'
-  if (project.batch && !project.cronWorkflows) return 'CronWorkflow yok'
-  if (project.customServe && !project.inferenceServices) return 'InferenceService yok'
+  if (!project.cronWorkflows && !project.inferenceServices) return 'CronWorkflow / InferenceService yok'
   return undefined
 }
 

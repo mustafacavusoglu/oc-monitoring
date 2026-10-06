@@ -198,9 +198,9 @@ const CUSTOM_SEEDS: ModelSeed[] = [
 
 /** Projects not represented by any resource above: one without a namespace, one empty. */
 const EMPTY_PROJECTS: Project[] = [
-  { key: 'ESKI_KAMPANYA', namespace: 'eski-kampanya', batch: true, customServe: false, namespaceExists: false, cronWorkflows: 0, inferenceServices: 0, pods: 0 },
-  { key: 'YENI_SKOR_MODEL', namespace: 'yeni-skor-model', batch: true, customServe: false, namespaceExists: true, cronWorkflows: 0, inferenceServices: 0, pods: 0 },
-  { key: 'BELGE_SINIFLANDIRMA', namespace: 'belge-siniflandirma', batch: false, customServe: true, namespaceExists: true, cronWorkflows: 0, inferenceServices: 0, pods: 0 },
+  { key: 'ESKI_KAMPANYA', namespace: 'eski-kampanya', namespaceExists: false, cronWorkflows: 0, inferenceServices: 0, pods: 0 },
+  { key: 'YENI_SKOR_MODEL', namespace: 'yeni-skor-model', namespaceExists: true, cronWorkflows: 0, inferenceServices: 0, pods: 0 },
+  { key: 'BELGE_SINIFLANDIRMA', namespace: 'belge-siniflandirma', namespaceExists: true, cronWorkflows: 0, inferenceServices: 0, pods: 0 },
 ]
 
 function customPods(model: Model, index: number, now: number): Pod[] {
@@ -237,13 +237,13 @@ export function createDemoDashboard(date: Date): DashboardResponse {
   const ok = { state: 'ready', lastSuccess: iso(now - 40_000) }
   const projects: Project[] = [
     ...[...new Set(cronWorkflows.map((w) => w.namespace))].map((namespace) => ({
-      key: namespace.toUpperCase().replaceAll('-', '_'), namespace, batch: true, customServe: false, namespaceExists: true,
+      key: namespace.toUpperCase().replaceAll('-', '_'), namespace, namespaceExists: true,
       cronWorkflows: cronWorkflows.filter((w) => w.namespace === namespace).length, inferenceServices: 0, pods: 2,
     })),
     ...[...new Set(models.filter((m) => m.type === 'custom').map((m) => m.namespace))].map((namespace) => {
       const own = models.filter((m) => m.namespace === namespace)
       return {
-        key: namespace.toUpperCase().replaceAll('-', '_'), namespace, type: 'CustomServe', batch: false, customServe: true, namespaceExists: true,
+        key: namespace.toUpperCase().replaceAll('-', '_'), namespace, namespaceExists: true,
         cronWorkflows: 0, inferenceServices: own.length, pods: own.reduce((sum, m) => sum + (m.pods?.length ?? 0), 0),
       }
     }),

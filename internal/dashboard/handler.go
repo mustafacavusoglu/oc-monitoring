@@ -75,14 +75,12 @@ func (h *Handler) snapshot(ctx context.Context, now time.Time) model.DashboardRe
 	res := h.cfg.Resources
 
 	// Everything comes from the cluster; the project file only names namespaces.
-	cronWorkflows := batch.BuildViews(objects[res.CronWorkflows], objects[res.Workflows], pods,
-		strings.ToLower(h.cfg.BatchServingKeyword)+"-", now)
+	cronWorkflows := batch.BuildViews(objects[res.CronWorkflows], objects[res.Workflows], pods, now)
 	models := serving.BuildModels(
 		objects[res.InferenceServices],
 		objects[res.ServingRuntimes],
 		objects[res.LLMInferenceServices],
 		pods,
-		toSet(projectSnapshot.CustomServeNamespaces()),
 		h.cfg.Serving,
 	)
 
@@ -103,7 +101,7 @@ func (h *Handler) snapshot(ctx context.Context, now time.Time) model.DashboardRe
 			Pods:     podSnapshot.Health,
 			Registry: batch.ResolveImages(ctx, cronWorkflows, h.sources.Images),
 		},
-		Namespaces:    namespaces(projectSnapshot.AllNamespaces(), models, cronWorkflows),
+		Namespaces:    namespaces(projectSnapshot.Namespaces(), models, cronWorkflows),
 		Projects:      coverage(projectSnapshot.Projects, objects, res, pods),
 		Models:        models,
 		CronWorkflows: cronWorkflows,

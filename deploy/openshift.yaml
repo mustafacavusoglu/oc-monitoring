@@ -13,13 +13,11 @@ data:
   UI_REFRESH_INTERVAL: 30s
   UPSTREAM_TIMEOUT: 10s
 
-  # Batch projects: namespaces come from the project JSON in Azure Repos.
+  # Project namespaces come from the keys of the project JSON in Azure Repos
+  # (PROJECT_NAME → project-name); everything else is read from the cluster.
   AZURE_REPO_URL: https://dev.azure.com/ORG/PROJECT/_git/REPOSITORY
   AZURE_REPO_BRANCH: main
   AZURE_PROJECTS_PATH: /path/to/project.json
-  BATCH_SERVING_KEYWORD: bch
-  # Projects whose `Type` equals this value are shown under Custom Serve.
-  CUSTOM_SERVE_TYPE: CustomServe
   PROJECT_REFRESH_INTERVAL: 5m
 
   # Batch image checks against Nexus. {namespace} and {imageId} are filled per image.
@@ -131,7 +129,7 @@ spec:
           type: RuntimeDefault
       containers:
         - name: dashboard
-          image: mustafa12/monitor:0.0.28
+          image: mustafa12/monitor:0.0.29
           imagePullPolicy: IfNotPresent
           envFrom:
             - configMapRef:

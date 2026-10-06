@@ -81,8 +81,8 @@ func TestDashboardEndpointCombinesBatchAndModels(t *testing.T) {
 	api := NewHandler(Sources{
 		Projects: func() projects.Snapshot {
 			return projects.Snapshot{Projects: []model.Project{
-				{Key: "PAYMENTS", Namespace: "payments", Batch: true},
-				{Key: "GHOST", Namespace: "ghost", Batch: true},
+				{Key: "PAYMENTS", Namespace: "payments"},
+				{Key: "GHOST", Namespace: "ghost"},
 				{Key: "CM_PROJE", Namespace: "cm-proje"},
 			}}
 		},
@@ -96,10 +96,9 @@ func TestDashboardEndpointCombinesBatchAndModels(t *testing.T) {
 		Pods:   func() cluster.Snapshot { return cluster.Snapshot{Health: model.SourceHealth{State: model.StateReady}} },
 		Images: fakeImages{t},
 	}, config.Config{
-		Resources:           resources,
-		BatchServingKeyword: "BCH",
-		Serving:             config.ServingRules{LLMImageKeywords: []string{"vllm"}, MLImageKeywords: []string{"triton"}},
-		UIRefreshInterval:   30 * time.Second,
+		Resources:         resources,
+		Serving:           config.ServingRules{LLMImageKeywords: []string{"vllm"}, MLImageKeywords: []string{"triton"}},
+		UIRefreshInterval: 30 * time.Second,
 	})
 
 	req := httptest.NewRequest(http.MethodGet, "/api/dashboard", nil)
@@ -140,8 +139,8 @@ func TestDashboardEndpointCombinesBatchAndModels(t *testing.T) {
 	}
 	// Coverage shows the project without a namespace instead of hiding it.
 	want := []model.Project{
-		{Key: "PAYMENTS", Namespace: "payments", Batch: true, NamespaceExists: true, CronWorkflows: 1},
-		{Key: "GHOST", Namespace: "ghost", Batch: true},
+		{Key: "PAYMENTS", Namespace: "payments", NamespaceExists: true, CronWorkflows: 1},
+		{Key: "GHOST", Namespace: "ghost"},
 		{Key: "CM_PROJE", Namespace: "cm-proje", NamespaceExists: true, CronWorkflows: 1},
 	}
 	if !reflect.DeepEqual(response.Projects, want) {

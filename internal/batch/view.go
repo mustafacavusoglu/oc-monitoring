@@ -22,9 +22,7 @@ const (
 
 var cronParser = cron.NewParser(cron.Minute | cron.Hour | cron.Dom | cron.Month | cron.Dow | cron.Descriptor)
 
-// BuildViews builds a row per CronWorkflow. imagePrefix (e.g. "bch-") marks the
-// image repository segment that names the Nexus repository to check.
-func BuildViews(cronWorkflows, workflows, pods []*unstructured.Unstructured, imagePrefix string, now time.Time) []model.CronWorkflow {
+func BuildViews(cronWorkflows, workflows, pods []*unstructured.Unstructured, now time.Time) []model.CronWorkflow {
 	workflowsByCron := groupByLabel(workflows, cronWorkflowLabel)
 	podsByWorkflow := groupByLabel(pods, workflowLabel)
 
@@ -53,12 +51,7 @@ func BuildViews(cronWorkflows, workflows, pods []*unstructured.Unstructured, ima
 			view.LastRun = &latest
 		}
 
-		view.Images = projectImages(imagePrefix, cronWorkflow.Object["spec"])
-		if len(view.Images) == 0 && len(runs) > 0 {
-			// A workflowTemplateRef keeps the images out of the CronWorkflow; the
-			// last Workflow stores the resolved template spec.
-			view.Images = projectImages(imagePrefix, runs[0].Object["spec"], runs[0].Object["status"])
-		}
+		view.Images = projectImages(cronWorkflow.Object["spec"], view.Namespace)
 		if !view.Suspended {
 			view.NextScheduledAt, view.ScheduleError = nextScheduledTime(view.Schedules, view.Timezone, now)
 		}
@@ -87,72 +80,51 @@ func groupByLabel(objects []*unstructured.Unstructured, label string) map[string
 	return groups
 }
 
-// projectImages finds every image reference with a "<prefix><project>"
-// repository segment anywhere in the given objects: container, script,
-// sidecar and init images, workflow parameter values (for templates that use
-// "{{workflow.parameters.image}}") or a stored template spec.
-// ponytail: matches any string that parses as such an image; tighten to known
-// fields if a non-image string ever looks like one.
-func projectImages(prefix string, objects ...any) []model.ImageResult {
+// projectImages returns every `image:` field of the CronWorkflow spec whose
+// image name contains the namespace, wherever the field is (container, script,
+// sidecar, init, containerSet or inline templates). Its ID is the part after
+// the last ":" (or the digest after "@").
+func projectImages(spec any, namespace string) []model.ImageResult {
 	results := make([]model.ImageResult, 0)
 	seen := make(map[string]bool)
+	namespace = strings.ToLower(namespace)
 	var walk func(any)
 	walk = func(value any) {
 		switch v := value.(type) {
 		case map[string]any:
-			for _, item := range v {
+			for key, item := range v {
+				if image, ok := item.(string); ok && key == "image" {
+					image = strings.TrimSpace(image)
+					name, id := splitImage(image)
+					if id != "" && !seen[image] && strings.Contains(strings.ToLower(name), namespace) {
+						seen[image] = true
+						results = append(results, model.ImageResult{Reference: image, ImageID: id, Status: model.ImageUnknown})
+					}
+					continue
+				}
 				walk(item)
 			}
 		case []any:
 			for _, item := range v {
 				walk(item)
 			}
-		case string:
-			reference := strings.TrimSpace(v)
-			if seen[reference] {
-				return
-			}
-			if project, imageID := projectImage(reference, prefix); project != "" {
-				seen[reference] = true
-				results = append(results, model.ImageResult{Reference: reference, Project: project, ImageID: imageID, Status: model.ImageUnknown})
-			}
 		}
 	}
-	for _, object := range objects {
-		walk(object)
-	}
+	walk(spec)
 	sort.Slice(results, func(i, j int) bool { return results[i].Reference < results[j].Reference })
 	return results
 }
 
-// projectImage returns the project named by the repository segment that
-// starts with prefix, and the image tag or digest:
-// registry.company.com/mlops/bch-yazi-girisi:ald73 → ("yazi-girisi", "ald73").
-// A reference without a tag or digest, or with spaces or templating, is not
-// an image to check.
-func projectImage(reference, prefix string) (project, imageID string) {
-	if reference == "" || strings.ContainsAny(reference, " \t\n{}") {
-		return "", ""
+// splitImage splits "registry:5000/mlops/bch-proje:ald73" into its name and
+// "ald73"; a colon before the last "/" is a registry port, not a tag.
+func splitImage(image string) (name, id string) {
+	if at := strings.LastIndex(image, "@"); at >= 0 {
+		return image[:at], image[at+1:]
 	}
-	ref := strings.ToLower(reference)
-	if at := strings.LastIndex(ref, "@"); at >= 0 {
-		ref, imageID = ref[:at], ref[at+1:]
-	} else if colon := strings.LastIndex(ref, ":"); colon > strings.LastIndex(ref, "/") {
-		ref, imageID = ref[:colon], ref[colon+1:]
+	if colon := strings.LastIndex(image, ":"); colon > strings.LastIndex(image, "/") {
+		return image[:colon], image[colon+1:]
 	}
-	if imageID == "" {
-		return "", ""
-	}
-	segments := strings.Split(ref, "/")
-	if len(segments) > 1 && strings.ContainsAny(segments[0], ".:") {
-		segments = segments[1:] // registry host
-	}
-	for _, segment := range segments {
-		if len(segment) > len(prefix) && strings.HasPrefix(segment, prefix) {
-			return strings.TrimPrefix(segment, prefix), imageID
-		}
-	}
-	return "", ""
+	return image, ""
 }
 
 func runSummary(workflow *unstructured.Unstructured) model.RunSummary {

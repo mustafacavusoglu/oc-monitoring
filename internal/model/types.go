@@ -34,7 +34,6 @@ const (
 
 type ImageResult struct {
 	Reference string     `json:"reference"`
-	Project   string     `json:"project,omitempty"` // from the image's bch-<project> segment
 	ImageID   string     `json:"imageId,omitempty"`
 	URL       string     `json:"url,omitempty"`
 	Status    string     `json:"status"`
@@ -102,7 +101,7 @@ type Model struct {
 	GPU         int64  `json:"gpu"`
 	// MIG holds MIG slices per profile (e.g. "1g.5gb": 2), per replica.
 	MIG map[string]int64 `json:"mig,omitempty"`
-	// Pods of a Custom Serve model (label serving.kserve.io/inferenceservice).
+	// Pods of an InferenceService (label serving.kserve.io/inferenceservice).
 	Pods       []Pod      `json:"pods,omitempty"`
 	CreatedAt  *time.Time `json:"createdAt,omitempty"`
 	StateSince *time.Time `json:"stateSince,omitempty"`
@@ -121,15 +120,11 @@ type Sources struct {
 	Registry SourceHealth `json:"registry"`
 }
 
-// Project is a project from the project JSON, with what the cluster actually
-// holds for it so gaps are visible. Batch means its `serving` list has the
-// batch keyword (its images are checked in Nexus).
+// Project is a project from the project JSON (only its namespace), with what
+// the cluster holds in that namespace so gaps are visible.
 type Project struct {
-	Key         string `json:"key"`
-	Namespace   string `json:"namespace"`
-	Type        string `json:"type,omitempty"`
-	Batch       bool   `json:"batch"`
-	CustomServe bool   `json:"customServe"`
+	Key       string `json:"key"`
+	Namespace string `json:"namespace"`
 
 	NamespaceExists   bool `json:"namespaceExists"`
 	CronWorkflows     int  `json:"cronWorkflows"`

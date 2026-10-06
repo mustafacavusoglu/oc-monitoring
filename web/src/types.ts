@@ -1,7 +1,5 @@
 export type ImageResult = {
   reference: string
-  /** Project named by the image's bch-<project> segment; used in the Nexus URL. */
-  project?: string
   imageId?: string
   url?: string
   status: string
@@ -68,7 +66,7 @@ export type Model = {
   gpu: number
   /** MIG slices per profile (e.g. "1g.5gb": 2), per replica. */
   mig?: Record<string, number>
-  /** Custom Serve models only. */
+  /** InferenceService pods (label serving.kserve.io/inferenceservice). */
   pods?: Pod[]
   createdAt?: string
   stateSince?: string
@@ -91,9 +89,6 @@ export type Sources = {
 export type Project = {
   key: string
   namespace: string
-  type?: string
-  batch: boolean
-  customServe: boolean
   namespaceExists: boolean
   cronWorkflows: number
   inferenceServices: number

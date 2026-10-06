@@ -18,16 +18,11 @@ type Config struct {
 	HTTPAddr string
 	WebDir   string
 
-	AzureRepoURL      string
-	AzureRepoBranch   string
-	AzureProjectsPath string
-	AzureToken        string // optional, from Secret
-	AzureTokenFile    string // optional, from Secret mount
-	// BatchServingKeyword selects project namespaces whose `serving` list
-	// contains this value (case-insensitive substring).
-	BatchServingKeyword string
-	// CustomServeType selects projects whose `type` field equals this value.
-	CustomServeType        string
+	AzureRepoURL           string
+	AzureRepoBranch        string
+	AzureProjectsPath      string
+	AzureToken             string // optional, from Secret
+	AzureTokenFile         string // optional, from Secret mount
 	ProjectRefreshInterval time.Duration
 
 	// NexusManifestURLTemplate contains {namespace} and {imageId} placeholders.
@@ -71,8 +66,6 @@ func Load() (Config, error) {
 		AzureProjectsPath:        e.str("AZURE_PROJECTS_PATH"),
 		AzureToken:               strings.TrimSpace(os.Getenv("AZURE_TOKEN")),
 		AzureTokenFile:           strings.TrimSpace(os.Getenv("AZURE_TOKEN_FILE")),
-		BatchServingKeyword:      e.str("BATCH_SERVING_KEYWORD"),
-		CustomServeType:          e.str("CUSTOM_SERVE_TYPE"),
 		ProjectRefreshInterval:   e.duration("PROJECT_REFRESH_INTERVAL"),
 		NexusManifestURLTemplate: e.str("NEXUS_MANIFEST_URL_TEMPLATE"),
 		ImageCacheTTL:            e.duration("IMAGE_CACHE_TTL"),

@@ -14,8 +14,6 @@ var validEnv = map[string]string{
 	"AZURE_REPO_URL":                 "https://dev.azure.com/example/project/_git/repo",
 	"AZURE_REPO_BRANCH":              "main",
 	"AZURE_PROJECTS_PATH":            "/projects.json",
-	"BATCH_SERVING_KEYWORD":          "bch",
-	"CUSTOM_SERVE_TYPE":              "CustomServe",
 	"PROJECT_REFRESH_INTERVAL":       "5m",
 	"NEXUS_MANIFEST_URL_TEMPLATE":    "https://nexus.example.test/v2/mlops/bch-{namespace}/manifests/{imageId}",
 	"IMAGE_CACHE_TTL":                "24h",

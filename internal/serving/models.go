@@ -3,9 +3,8 @@
 // An LLMInferenceService is always an LLM. An InferenceService is classified
 // by the images of the ServingRuntime it names: a configured LLM keyword
 // (e.g. vllm) makes it an LLM, a configured ML keyword (e.g. triton) an ML
-// model; anything else is not shown. In a Custom Serve project namespace
-// every model is a Custom Serve model, whatever its runtime, and carries its
-// pods.
+// model, any other runtime a Custom Serve model. Every InferenceService
+// carries its pods.
 package serving
 
 import (
@@ -23,7 +22,7 @@ import (
 
 const inferenceServiceLabel = "serving.kserve.io/inferenceservice"
 
-func BuildModels(inferenceServices, servingRuntimes, llmInferenceServices, pods []*unstructured.Unstructured, customServe map[string]bool, rules config.ServingRules) []model.Model {
+func BuildModels(inferenceServices, servingRuntimes, llmInferenceServices, pods []*unstructured.Unstructured, rules config.ServingRules) []model.Model {
 	runtimes := make(map[string][]string, len(servingRuntimes))
 	for _, runtime := range servingRuntimes {
 		runtimes[cluster.Key(runtime.GetNamespace(), runtime.GetName())] = containerImages(runtime.Object, "spec", "containers")
@@ -40,25 +39,12 @@ func BuildModels(inferenceServices, servingRuntimes, llmInferenceServices, pods 
 	for _, isvc := range inferenceServices {
 		runtimeName, _, _ := unstructured.NestedString(isvc.Object, "spec", "predictor", "model", "runtime")
 		images := runtimes[cluster.Key(isvc.GetNamespace(), runtimeName)]
-		modelType := classify(images, rules)
-		if customServe[isvc.GetNamespace()] {
-			modelType = model.TypeCustomServe
-		}
-		if modelType == "" {
-			continue
-		}
-		m := inferenceServiceModel(isvc, modelType, runtimeName, images, rules)
-		if modelType == model.TypeCustomServe {
-			m.Pods = podViews(podsByModel[cluster.Key(m.Namespace, m.Name)])
-		}
+		m := inferenceServiceModel(isvc, classify(images, rules), runtimeName, images, rules)
+		m.Pods = podViews(podsByModel[cluster.Key(m.Namespace, m.Name)])
 		models = append(models, m)
 	}
 	for _, llmisvc := range llmInferenceServices {
-		m := llmInferenceServiceModel(llmisvc, rules)
-		if customServe[m.Namespace] {
-			m.Type = model.TypeCustomServe
-		}
-		models = append(models, m)
+		models = append(models, llmInferenceServiceModel(llmisvc, rules))
 	}
 	sort.Slice(models, func(i, j int) bool {
 		if models[i].Namespace == models[j].Namespace {
@@ -137,7 +123,8 @@ func baseModel(object *unstructured.Unstructured, modelType string) model.Model 
 	return m
 }
 
-// classify checks LLM keywords first so a runtime image matching both is an LLM.
+// classify checks LLM keywords first so a runtime image matching both is an
+// LLM; a runtime matching neither (or not found) is Custom Serve.
 func classify(images []string, rules config.ServingRules) string {
 	switch {
 	case matchesAny(images, rules.LLMImageKeywords):
@@ -145,7 +132,7 @@ func classify(images []string, rules config.ServingRules) string {
 	case matchesAny(images, rules.MLImageKeywords):
 		return model.TypeML
 	default:
-		return ""
+		return model.TypeCustomServe
 	}
 }
 

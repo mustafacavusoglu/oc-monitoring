@@ -15,14 +15,14 @@ type ImageChecker interface {
 
 // ResolveImages fills the registry status of every project image in place and
 // returns the registry's health as seen by this lookup. The manifest URL uses
-// the project named by the image itself.
+// the CronWorkflow's namespace and the image ID.
 func ResolveImages(ctx context.Context, views []model.CronWorkflow, checker ImageChecker) model.SourceHealth {
 	var urls []string
 	for i := range views {
 		for j := range views[i].Images {
 			image := &views[i].Images[j]
 			if image.ImageID != "" {
-				image.URL = checker.ManifestURL(image.Project, image.ImageID)
+				image.URL = checker.ManifestURL(views[i].Namespace, image.ImageID)
 				urls = append(urls, image.URL)
 			}
 		}

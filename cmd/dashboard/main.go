@@ -34,17 +34,20 @@ func main() {
 	projectSource := projects.NewSource(cfg, nil)
 	res := cfg.Resources
 	// Everything is watched cluster-wide with one informer per resource; only
-	// pods are watched per namespace: where CronWorkflows run (last-run pods)
-	// and the project namespaces (Custom Serve pods).
+	// pods are watched per namespace, where CronWorkflows (last-run pods) and
+	// InferenceServices (serving pods) run.
 	clusterWatcher := cluster.NewWatcher("cluster", clients,
 		[]schema.GroupVersionResource{res.CronWorkflows, res.Workflows, res.InferenceServices, res.ServingRuntimes, res.LLMInferenceServices, cluster.Namespaces},
 		cluster.AllNamespaces)
 	podWatcher := cluster.NewWatcher("pods", clients,
 		[]schema.GroupVersionResource{cluster.Pods},
 		func() []string {
-			namespaces := projectSource.Snapshot().AllNamespaces()
-			for _, cronWorkflow := range clusterWatcher.Snapshot().Objects[res.CronWorkflows] {
-				namespaces = append(namespaces, cronWorkflow.GetNamespace())
+			var namespaces []string
+			objects := clusterWatcher.Snapshot().Objects
+			for _, gvr := range []schema.GroupVersionResource{res.CronWorkflows, res.InferenceServices, res.LLMInferenceServices} {
+				for _, object := range objects[gvr] {
+					namespaces = append(namespaces, object.GetNamespace())
+				}
 			}
 			return namespaces
 		})

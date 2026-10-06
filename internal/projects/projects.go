@@ -7,7 +7,6 @@ import (
 	"log"
 	"net/http"
 	"os"
-	"slices"
 	"sort"
 	"strings"
 	"sync"
@@ -27,39 +26,18 @@ type Snapshot struct {
 	Error       string
 }
 
-func (s Snapshot) namespaces(match func(model.Project) bool) []string {
-	var namespaces []string
+// Namespaces are the namespaces of every project.
+func (s Snapshot) Namespaces() []string {
+	namespaces := make([]string, 0, len(s.Projects))
 	for _, project := range s.Projects {
-		if match(project) {
-			namespaces = append(namespaces, project.Namespace)
-		}
+		namespaces = append(namespaces, project.Namespace)
 	}
 	return namespaces
-}
-
-func (s Snapshot) BatchNamespaces() []string {
-	return s.namespaces(func(p model.Project) bool { return p.Batch })
-}
-
-func (s Snapshot) CustomServeNamespaces() []string {
-	return s.namespaces(func(p model.Project) bool { return p.CustomServe })
-}
-
-// AllNamespaces are the namespaces of every project; their CronWorkflows and
-// pods are watched.
-func (s Snapshot) AllNamespaces() []string {
-	return s.namespaces(func(model.Project) bool { return true })
-}
-
-type rules struct {
-	batchKeyword    string // matched in the `serving` list
-	customServeType string // matched against the `type` field
 }
 
 type Source struct {
 	client   *azureClient
 	interval time.Duration
-	rules    rules
 
 	mu       sync.RWMutex
 	snapshot Snapshot
@@ -69,10 +47,6 @@ func NewSource(cfg config.Config, client *http.Client) *Source {
 	return &Source{
 		client:   newAzureClient(cfg, client),
 		interval: cfg.ProjectRefreshInterval,
-		rules: rules{
-			batchKeyword:    strings.ToLower(cfg.BatchServingKeyword),
-			customServeType: cfg.CustomServeType,
-		},
 		snapshot: Snapshot{Stale: true, Error: "waiting for first project refresh"},
 	}
 }
@@ -107,10 +81,9 @@ func (s *Source) refresh(ctx context.Context) {
 		s.mu.Unlock()
 		return
 	}
-	projects, skipped := parseProjects(raw, s.rules)
+	projects, skipped := parseProjects(raw)
 	snapshot := Snapshot{Projects: projects, Skipped: skipped}
-	log.Printf("project source refresh completed: entries=%d selected=%d batch=%d custom_serve=%d skipped=%d",
-		len(raw), len(projects), len(snapshot.BatchNamespaces()), len(snapshot.CustomServeNamespaces()), len(skipped))
+	log.Printf("project source refresh completed: entries=%d namespaces=%d skipped=%d", len(raw), len(projects), len(skipped))
 	for _, reason := range skipped {
 		log.Printf("project source skipped entry: %s", reason)
 	}
@@ -121,9 +94,10 @@ func (s *Source) refresh(ctx context.Context) {
 	s.mu.Unlock()
 }
 
-// parseProjects reads every project. A malformed entry is skipped (and
-// reported) instead of failing the whole project list.
-func parseProjects(raw map[string]json.RawMessage, r rules) ([]model.Project, []string) {
+// parseProjects turns every project key into its namespace (PROJECT_NAME →
+// project-name). Only the keys matter; everything else comes from the cluster.
+// An empty key or a second key for the same namespace is skipped and reported.
+func parseProjects(raw map[string]json.RawMessage) ([]model.Project, []string) {
 	keys := make([]string, 0, len(raw))
 	for key := range raw {
 		keys = append(keys, key)
@@ -134,11 +108,6 @@ func parseProjects(raw map[string]json.RawMessage, r rules) ([]model.Project, []
 	var skipped []string
 	owners := make(map[string]string, len(raw))
 	for _, key := range keys {
-		var fields map[string]json.RawMessage
-		if err := json.Unmarshal(raw[key], &fields); err != nil || fields == nil {
-			skipped = append(skipped, fmt.Sprintf("%q is not a JSON object", key))
-			continue
-		}
 		namespace := strings.ToLower(strings.ReplaceAll(strings.TrimSpace(key), "_", "-"))
 		if namespace == "" {
 			skipped = append(skipped, "empty project key")
@@ -149,40 +118,9 @@ func parseProjects(raw map[string]json.RawMessage, r rules) ([]model.Project, []
 			continue
 		}
 		owners[namespace] = key
-
-		serving := stringList(field(fields, "serving"))
-		projectType := strings.Join(stringList(field(fields, "type")), ",")
-		projects = append(projects, model.Project{
-			Key:         key,
-			Namespace:   namespace,
-			Type:        projectType,
-			Batch:       slices.ContainsFunc(serving, func(v string) bool { return strings.Contains(strings.ToLower(v), r.batchKeyword) }),
-			CustomServe: strings.EqualFold(strings.TrimSpace(projectType), r.customServeType),
-		})
+		projects = append(projects, model.Project{Key: key, Namespace: namespace})
 	}
 	return projects, skipped
-}
-
-func field(fields map[string]json.RawMessage, name string) json.RawMessage {
-	for key, value := range fields {
-		if strings.EqualFold(key, name) {
-			return value
-		}
-	}
-	return nil
-}
-
-// stringList reads a JSON string or string array.
-func stringList(raw json.RawMessage) []string {
-	var list []string
-	if json.Unmarshal(raw, &list) == nil {
-		return list
-	}
-	var single string
-	if json.Unmarshal(raw, &single) == nil && single != "" {
-		return []string{single}
-	}
-	return nil
 }
 
 func readSecretFile(file string) (string, error) {

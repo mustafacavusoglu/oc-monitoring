@@ -12,7 +12,7 @@
       "timezone": "Europe/Istanbul",
       "workflowSpec": {
         "templates": [
-          { "name": "run", "container": { "image": "registry.example.test/mlops/bch-payments/payout:v3" } },
+          { "name": "run", "container": { "image": "registry.example.test/payments-bch/payout:v3" } },
           { "name": "bad-image", "script": { "image": "" } }
         ]
       }

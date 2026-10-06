@@ -38,8 +38,9 @@ const podsColumn: Column<Model> = {
     const pods = m.pods ?? []
     const restarts = pods.reduce((sum, pod) => sum + pod.restarts, 0)
     const bad = unhealthyPods(m)
+    if (!pods.length) return <span className="muted">—</span>
     return <div className="stack">
-      <span className={`badge tone-${!pods.length ? 'neutral' : bad ? 'critical' : 'good'}`}>{pods.length - bad}/{pods.length} hazır</span>
+      <span className={`badge tone-${bad ? 'critical' : 'good'}`}>{pods.length - bad}/{pods.length} hazır</span>
       {restarts ? <small className="muted">{restarts} restart</small> : null}
     </div>
   },
@@ -124,7 +125,7 @@ export function Models({ type, models, namespace, filter, navigate }: {
     <Panel title="Modeller" subtitle="Satırı açarak runtime, image, endpoint ve pod ayrıntılarını görün"
       actions={<SearchInput value={query} onChange={setQuery} placeholder="Model, namespace, runtime ara" />}>
       <FilterBar namespace={namespace} filter={filter} filterLabel={active.label} shown={visible.length} total={models.length} navigate={navigate} />
-      <DataTable rows={visible} columns={type === 'custom' ? [...columns.slice(0, 3), podsColumn, ...columns.slice(3)] : columns} rowKey={(m) => `${m.kind}/${m.namespace}/${m.name}`} detail={(m) => <ModelDetail model={m} />}
+      <DataTable rows={visible} columns={[...columns.slice(0, 3), podsColumn, ...columns.slice(3)]} rowKey={(m) => `${m.kind}/${m.namespace}/${m.name}`} detail={(m) => <ModelDetail model={m} />}
         empty="Bu filtrelerle eşleşen model yok." initialSort={{ key: 'state', direction: 1 }} />
     </Panel>
   </div>

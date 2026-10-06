@@ -16,7 +16,7 @@ const PAGE_TEXT: Record<Page, { title: string; subtitle: string }> = {
   overview: { title: 'Genel bakış', subtitle: 'Tüm model ve batch kaynaklarının özeti' },
   llm: { title: 'LLM modelleri', subtitle: 'LLMInferenceService ve vLLM runtime kullanan InferenceService’ler' },
   ml: { title: 'ML modelleri', subtitle: 'Triton runtime kullanan InferenceService’ler' },
-  custom: { title: 'Custom Serve', subtitle: 'Type: CustomServe projelerin InferenceService’leri, runtime’ları ve pod’ları' },
+  custom: { title: 'Custom Serve', subtitle: 'vLLM veya Triton dışında bir runtime kullanan InferenceService’ler ve pod’ları' },
   projects: { title: 'Projeler', subtitle: 'Proje JSON’undaki projeler ve cluster’da bulunan kaynakları' },
   batch: { title: 'Batch modelleri', subtitle: 'Argo CronWorkflow’lar, son çalışmalar ve Nexus image kontrolü' },
 }

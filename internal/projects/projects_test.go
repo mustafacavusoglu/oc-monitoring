@@ -13,9 +13,7 @@ import (
 	"monitor/internal/config"
 )
 
-var testRules = rules{batchKeyword: "bch", customServeType: "CustomServe"}
-
-func TestSourceRefreshReadsEveryProject(t *testing.T) {
+func TestSourceRefreshTurnsEveryKeyIntoANamespace(t *testing.T) {
 	data, err := os.ReadFile("testdata/projects.json")
 	if err != nil {
 		t.Fatal(err)
@@ -23,52 +21,33 @@ func TestSourceRefreshReadsEveryProject(t *testing.T) {
 	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { _, _ = w.Write(data) }))
 	defer server.Close()
 	source := NewSource(config.Config{
-		AzureRepoURL:        server.URL + "/org/_git/repo",
-		AzureRepoBranch:     "main",
-		AzureProjectsPath:   "projects.json",
-		BatchServingKeyword: "BCH",
-		CustomServeType:     "CustomServe",
-		UpstreamTimeout:     time.Second,
+		AzureRepoURL:      server.URL + "/org/_git/repo",
+		AzureRepoBranch:   "main",
+		AzureProjectsPath: "projects.json",
+		UpstreamTimeout:   time.Second,
 	}, server.Client())
 	source.refresh(context.Background())
 	snapshot := source.Snapshot()
 	if snapshot.Stale {
 		t.Fatalf("snapshot stale: %s", snapshot.Error)
 	}
-	if got, want := snapshot.BatchNamespaces(), []string{"payments-api", "retail-model"}; !reflect.DeepEqual(got, want) {
-		t.Fatalf("batch namespaces = %v, want %v", got, want)
-	}
-	if got, want := snapshot.CustomServeNamespaces(), []string{"retail-model", "platform-tools"}; !reflect.DeepEqual(got, want) {
-		t.Fatalf("custom serve namespaces = %v, want %v", got, want)
-	}
-	if got, want := snapshot.AllNamespaces(), []string{"payments-api", "retail-model", "platform-tools", "unclassified"}; !reflect.DeepEqual(got, want) {
-		t.Fatalf("all namespaces = %v, want every project %v", got, want)
+	if got, want := snapshot.Namespaces(), []string{"payments-api", "retail-model", "platform-tools", "unclassified"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("namespaces = %v, want every project %v", got, want)
 	}
 }
 
-func TestParseProjectsSkipsBadEntriesInsteadOfFailing(t *testing.T) {
+func TestParseProjectsSkipsDuplicateNamespacesInsteadOfFailing(t *testing.T) {
 	raw := map[string]json.RawMessage{
-		"ON_PROJE":     json.RawMessage(`{"serving":["BCH"]}`),
-		"STRING_PROJE": json.RawMessage(`{"serving":"bch"}`),
-		"CM_PROJE":     json.RawMessage(`{"serving":["CM"]}`),
-		"BROKEN":       json.RawMessage(`["not","an","object"]`),
-		"dup-proje":    json.RawMessage(`{"serving":["BCH"]}`),
-		"DUP_PROJE":    json.RawMessage(`{"serving":["BCH"]}`),
-		"CUSTOM_PROJE": json.RawMessage(`{"Type":"customserve"}`),
+		"YAZI_GIRISI_MODEL": json.RawMessage(`{"Serving":["BCH"]}`),
+		"ANY_VALUE":         json.RawMessage(`["not","an","object"]`),
+		"dup-proje":         json.RawMessage(`{}`),
+		"DUP_PROJE":         json.RawMessage(`{}`),
 	}
-	projects, skipped := parseProjects(raw, testRules)
-	snapshot := Snapshot{Projects: projects}
-
-	if got, want := snapshot.BatchNamespaces(), []string{"dup-proje", "on-proje", "string-proje"}; !reflect.DeepEqual(got, want) {
-		t.Fatalf("batch namespaces = %v, want %v", got, want)
+	projects, skipped := parseProjects(raw)
+	if got, want := (Snapshot{Projects: projects}).Namespaces(), []string{"any-value", "dup-proje", "yazi-girisi-model"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("namespaces = %v, want %v", got, want)
 	}
-	if got, want := snapshot.CustomServeNamespaces(), []string{"custom-proje"}; !reflect.DeepEqual(got, want) {
-		t.Fatalf("custom serve namespaces = %v, want %v", got, want)
-	}
-	if len(projects) != 5 {
-		t.Fatalf("projects = %d, want 5 (every entry but BROKEN and the duplicate)", len(projects))
-	}
-	if len(skipped) != 2 {
-		t.Fatalf("skipped = %q, want BROKEN and the duplicate namespace", skipped)
+	if len(skipped) != 1 {
+		t.Fatalf("skipped = %q, want only the duplicate namespace", skipped)
 	}
 }

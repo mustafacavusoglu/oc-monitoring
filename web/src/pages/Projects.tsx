@@ -11,8 +11,8 @@ import type { Project } from '../types'
 
 const FILTERS: Record<string, { label: string; match: (project: Project) => boolean }> = {
   all: { label: 'Tümü', match: () => true },
-  batch: { label: 'BCH projesi', match: (p) => p.batch },
-  custom: { label: 'Custom Serve projesi', match: (p) => p.customServe },
+  cron: { label: 'CronWorkflow’u olan', match: (p) => p.cronWorkflows > 0 },
+  isvc: { label: 'InferenceService’i olan', match: (p) => p.inferenceServices > 0 },
   gap: { label: 'Kaynağı eksik', match: (p) => projectGap(p) !== undefined },
 }
 
@@ -20,14 +20,6 @@ const count = (value: number) => value || <span className="muted">0</span>
 
 const columns: Column<Project>[] = [
   { key: 'key', header: 'Proje', render: (p) => <NameCell name={p.key} namespace={p.namespace} />, sortValue: (p) => p.key },
-  {
-    key: 'type', header: 'Tür', sortValue: (p) => Number(p.batch) + 2 * Number(p.customServe),
-    render: (p) => <div className="stack">
-      {p.batch ? <span className="type-tag type-batch">BCH</span> : null}
-      {p.customServe ? <span className="type-tag type-custom">Custom Serve</span> : null}
-      {!p.batch && !p.customServe ? <span className="muted">—</span> : null}
-    </div>,
-  },
   {
     key: 'gap', header: 'Durum', sortValue: (p) => (projectGap(p) ? 0 : 1),
     render: (p) => projectGap(p) ? <span className="badge tone-critical"><span aria-hidden="true">✕</span>{projectGap(p)}</span>
@@ -44,8 +36,8 @@ export function Projects({ projects, namespace, filter, navigate }: { projects: 
   const active = FILTERS[filter] ?? FILTERS.all
   const kpis = [
     { key: 'all', label: 'Proje', value: projects.length, sub: 'Proje JSON’undan' },
-    { key: 'batch', label: 'BCH projesi', value: projects.filter(FILTERS.batch.match).length, sub: 'Nexus image kontrolü yapılır' },
-    { key: 'custom', label: 'Custom Serve projesi', value: projects.filter(FILTERS.custom.match).length },
+    { key: 'cron', label: 'CronWorkflow’u olan', value: projects.filter(FILTERS.cron.match).length },
+    { key: 'isvc', label: 'InferenceService’i olan', value: projects.filter(FILTERS.isvc.match).length },
     { key: 'gap', label: 'Kaynağı eksik', value: projects.filter(FILTERS.gap.match).length, sub: 'Namespace veya kaynak yok', tone: 'critical' as const },
   ]
   const visible = useMemo(() => projects.filter((p) => active.match(p) && matchesQuery(query, p.key, p.namespace)), [projects, active, query])

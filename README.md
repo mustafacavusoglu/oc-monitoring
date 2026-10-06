@@ -6,10 +6,12 @@ OpenShift üzerinde çalışan LLM modellerini, ML modellerini ve batch (Argo Cr
 |---|---|---|
 | LLM modelleri | `LLMInferenceService`, `InferenceService` | Her `LLMInferenceService` LLM’dir. `InferenceService`, `spec.predictor.model.runtime` ile bağlı olduğu `ServingRuntime` image’ı `LLM_RUNTIME_IMAGE_KEYWORDS` (ör. `vllm`) içeriyorsa LLM’dir. |
 | ML modelleri | `InferenceService` | Runtime image’ı `ML_RUNTIME_IMAGE_KEYWORDS` (ör. `triton`) içeriyorsa ML’dir. İki listeye de uyan runtime LLM sayılır; hiçbirine uymayanlar gösterilmez. |
-| Custom Serve | `InferenceService`, `ServingRuntime`, pod | Proje JSON’unda `Type` alanı `CUSTOM_SERVE_TYPE` (ör. `CustomServe`) olan projelerin namespace’indeki tüm `InferenceService`’ler, runtime’ından bağımsız. Pod’ları (`serving.kserve.io/inferenceservice` etiketi) hazır/restart bilgisiyle gösterilir; bu modeller LLM/ML sayfalarında tekrar sayılmaz. |
-| Batch modelleri | `CronWorkflow`, `Workflow`, pod | Cluster’daki **tüm** namespace’lerin CronWorkflow’ları, son Workflow’ları ve pod’ları. Proje JSON’u yalnızca namespace’leri ve proje türünü (BCH, Custom Serve) verir; kaynakların kendisi OpenShift’ten okunur. |
+| Custom Serve | `InferenceService`, `ServingRuntime`, pod | Runtime image’ı LLM veya ML anahtar kelimelerine uymayan (ya da runtime’ı bulunamayan) tüm `InferenceService`’ler. |
+| Batch modelleri | `CronWorkflow`, `Workflow`, pod | Cluster’daki **tüm** namespace’lerin CronWorkflow’ları, son Workflow’ları ve pod’ları. |
 
-**Projeler** sayfası proje JSON’undaki her batch/Custom Serve projesini cluster’da bulunanlarla yan yana gösterir: namespace var mı, kaç CronWorkflow, InferenceService ve pod bulundu. Kaynağı eksik projeler en üstte listelenir; böylece dashboard’da görünmeyen bir projenin nedeni (namespace yok, kaynak yok) açıkça görülür. Okunamayan proje kayıtları (ör. JSON object olmayan değer veya aynı namespace’e dönüşen iki anahtar) tüm listeyi bozmaz; atlanır ve kaynak durumunda listelenir.
+Her şey OpenShift’ten okunur ve türler kaynaklardan çıkarılır; proje JSON’u yalnızca proje namespace’lerini verir. Her `InferenceService`’in pod’ları (`serving.kserve.io/inferenceservice` etiketi) hazır/restart bilgisiyle model satırında gösterilir.
+
+**Projeler** sayfası proje JSON’undaki her projeyi cluster’da bulunanlarla yan yana gösterir: namespace var mı, kaç CronWorkflow, InferenceService ve pod bulundu. Kaynağı eksik projeler en üstte listelenir; böylece dashboard’da görünmeyen bir projenin nedeni (namespace yok, kaynak yok) açıkça görülür. Okunamayan proje kayıtları (ör. JSON object olmayan değer veya aynı namespace’e dönüşen iki anahtar) tüm listeyi bozmaz; atlanır ve kaynak durumunda listelenir.
 
 **Filtreleme:** Her grafikteki çubuk, segment, donut dilimi ve KPI kartı tıklanınca o sayfanın listesini filtreler; Genel bakış’taki grafikler ilgili türün sayfasını o filtreyle açar (ör. Sağlık durumu → Batch · Sorunlu). Aktif filtreler listenin üstünde kaldırılabilir etiketler olarak görünür ve URL’de tutulur (`#/batch?ns=kredi-skor&f=critical`), bu yüzden filtreli görünüm link olarak paylaşılabilir.
 
@@ -34,8 +36,6 @@ Ortama özgü bütün değerler `deploy/openshift.yaml` içindeki `mlops-dashboa
 | `UI_REFRESH_INTERVAL` | Arayüzün yenileme aralığı (ör. `30s`). |
 | `UPSTREAM_TIMEOUT` | Azure ve Nexus HTTP istek zaman aşımı. |
 | `AZURE_REPO_URL`, `AZURE_REPO_BRANCH`, `AZURE_PROJECTS_PATH` | Proje JSON’unun Azure Repos konumu. |
-| `CUSTOM_SERVE_TYPE` | Custom Serve projelerini seçen `Type` değeri (büyük/küçük harf duyarsız). |
-| `BATCH_SERVING_KEYWORD` | Nexus image kontrolü yapılacak (BCH) projeleri seçen `serving` değeri (büyük/küçük harf duyarsız, içerir eşleşmesi). |
 | `PROJECT_REFRESH_INTERVAL` | Proje JSON’unun yenilenme aralığı. |
 | `NEXUS_MANIFEST_URL_TEMPLATE` | `{namespace}` ve `{imageId}` içeren manifest URL şablonu. |
 | `IMAGE_CACHE_TTL`, `REGISTRY_CHECK_CONCURRENCY` | Nexus sonuç cache süresi ve aynı anda yapılabilecek kontrol sayısı. |
@@ -54,16 +54,16 @@ oc create secret generic mlops-dashboard-secrets --from-literal=AZURE_TOKEN=<AZU
 
 ```json
 {
-  "PAYMENTS_API": { "serving": ["BCH"], "team": "payments" },
-  "internal-tool": { "serving": ["OTHER"], "team": "platform" }
+  "PAYMENTS_API": { "Serving": ["BCH"] },
+  "YAZI_GIRISI_MODEL": { "Serving": ["BCH"] }
 }
 ```
 
-Proje key’i küçük harfe çevrilir ve `_` karakterleri `-` olur; sonuç namespace adıdır (`PAYMENTS_API` → `payments-api`). Azure geçici olarak erişilemezse son başarılı liste kullanılmaya devam eder ve kaynak “Sorunlu” görünür.
+Yalnızca proje key’leri kullanılır: key küçük harfe çevrilir ve `_` karakterleri `-` olur; sonuç namespace adıdır (`PAYMENTS_API` → `payments-api`). Değerlerin içeriği okunmaz. Azure geçici olarak erişilemezse son başarılı liste kullanılmaya devam eder ve kaynak “Sorunlu” görünür.
 
 ### Nexus image kontrolü
 
-Repository yolunda `BATCH_SERVING_KEYWORD-` (ör. `bch-`) ile başlayan bir parça ve tag (ya da `@sha256:` digest) içeren her image kontrol edilir. Image CronWorkflow’un herhangi bir yerinde olabilir: template container/script/sidecar/init image’ları veya `{{workflow.parameters.image}}` kullanan template’ler için workflow parametrelerinin değerleri. CronWorkflow `workflowTemplateRef` kullanıyorsa image’lar son Workflow’un sakladığı template spec’ten okunur. Şablondaki `{namespace}`, image’daki `bch-` sonrası proje adıdır; image ID tag veya digest’tir: `repomaster.../mlops/bch-yazi-girisi-model:ald7383jdls8373` → `.../bch-yazi-girisi-model/manifests/ald7383jdls8373`. Kontrol edilecek image bulunamayan CronWorkflow’lar Batch sayfasında “Image kontrolü yok” kartıyla listelenir. HTTP 200 `Mevcut`, 404 `Bulunamadı`, diğer durumlar `Hata` olarak gösterilir. Her istek, sonuç ve cache kullanımı `INFO` seviyesinde loglanır.
+CronWorkflow spec’indeki her `image:` alanı okunur (container, script, sidecar, init, containerSet veya inline template). Adında CronWorkflow’un namespace’i geçen image kontrol edilir; image ID son `:` sonrasıdır (digest için `@` sonrası). Şablondaki `{namespace}` CronWorkflow’un namespace’i, `{imageId}` bu ID’dir: `repomaster.../mlops/bch-yazi-girisi-model:ald7383jdls8373` → `.../bch-yazi-girisi-model/manifests/ald7383jdls8373`. Kontrol edilecek image bulunamayan CronWorkflow’lar Batch sayfasında “Image kontrolü yok” kartıyla listelenir. HTTP 200 `Mevcut`, 404 `Bulunamadı`, diğer durumlar `Hata` olarak gösterilir. Her istek, sonuç ve cache kullanımı `INFO` seviyesinde loglanır.
 
 ## Geliştirme
 
@@ -76,7 +76,7 @@ cd web && npm ci && npm run dev    # http://localhost:5173
 # Testler ve build
 go test ./... -count=1
 npm run build --prefix web
-docker buildx build --platform linux/amd64 -t mustafa12/monitor:0.0.28 --push .
+docker buildx build --platform linux/amd64 -t mustafa12/monitor:0.0.29 --push .
 ```
 
 `npm run dev`, Vite dev sunucusunda `/api/dashboard` isteğini `web/src/mock/demo.ts` içindeki deterministik dummy veriyle yanıtlar. Bu dosya yalnızca dev sunucusunda yüklenir, production bundle’a girmez.
@@ -89,7 +89,7 @@ Kod yapısı:
 | `internal/cluster` | Değişen namespace kümesi için genel informer watcher’ı. |
 | `internal/projects` | Azure Repos’tan proje JSON’unu okuyup batch namespace’lerini seçer. |
 | `internal/batch` | CronWorkflow satırlarını, çalışma geçmişini ve image kontrollerini üretir. |
-| `internal/serving` | InferenceService/LLMInferenceService’leri LLM/ML olarak sınıflandırır. |
+| `internal/serving` | InferenceService/LLMInferenceService’leri LLM/ML/Custom Serve olarak sınıflandırır. |
 | `internal/registry` | Nexus manifest kontrolü ve TTL cache. |
 | `internal/dashboard` | Tek JSON uç noktası: `GET /api/dashboard`. |
 | `web/src` | React arayüzü: `pages/` (sayfalar), `components/` (tablo, KPI, grafikler), `lib/` (durum, format, polling, routing). |
