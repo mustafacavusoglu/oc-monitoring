@@ -4,13 +4,15 @@ import { KpiRow, type KpiItem } from '../components/Kpi'
 import { Panel } from '../components/Panel'
 import { StackedBars } from '../components/charts/StackedBars'
 import { HEALTH_SERIES, TYPE_SERIES, groupRows, namespacePick, namespaceSelection } from '../lib/chart'
+import { ConsoleLink } from '../lib/console'
 import { formatRelative } from '../lib/format'
 import { TYPE_LABELS, batchIssues, batchTone, modelIssues, modelTone } from '../lib/status'
 import type { Navigate, Page } from '../lib/useRoute'
 import type { CronWorkflow, Model } from '../types'
 
 type Kind = 'llm' | 'ml' | 'custom' | 'batch'
-type Item = { kind: Kind; namespace: string; name: string; tone: string; issues: string[]; since?: string }
+/** resourceKind is the Kubernetes kind, used for the console link. */
+type Item = { kind: Kind; resourceKind: string; namespace: string; name: string; tone: string; issues: string[]; since?: string }
 
 const NAMESPACE_ROWS = 10
 
@@ -20,9 +22,12 @@ const openItem = (navigate: Navigate, item: Item) => navigate({ page: item.kind,
 const columns = (navigate: Navigate): Column<Item>[] => [
   {
     key: 'name', header: 'Kaynak', sortValue: (item) => item.name,
-    render: (item) => <button type="button" className="link-button" title="Kaynağın sayfasında aç" onClick={() => openItem(navigate, item)}>
-      <NameCell name={item.name} namespace={item.namespace} />
-    </button>,
+    render: (item) => <div className="name-with-link">
+      <button type="button" className="link-button" title="Kaynağın sayfasında aç" onClick={() => openItem(navigate, item)}>
+        <NameCell name={item.name} namespace={item.namespace} />
+      </button>
+      <ConsoleLink kind={item.resourceKind} namespace={item.namespace} name={item.name} />
+    </div>,
   },
   { key: 'kind', header: 'Tür', render: (item) => <span className={`type-tag type-${item.kind}`}>{TYPE_LABELS[item.kind]}</span>, sortValue: (item) => item.kind },
   { key: 'issue', header: 'Sorun', render: (item) => <span className="issue">{item.issues.join(' · ')}</span> },
@@ -33,9 +38,9 @@ export function Overview({ models, cronWorkflows, namespace, navigate }: {
   models: Model[]; cronWorkflows: CronWorkflow[]; namespace: string; navigate: Navigate
 }) {
   const items = useMemo<Item[]>(() => [
-    ...models.map((m) => ({ kind: m.type, namespace: m.namespace, name: m.name, tone: modelTone(m), issues: modelIssues(m), since: m.stateSince })),
+    ...models.map((m) => ({ kind: m.type, resourceKind: m.kind, namespace: m.namespace, name: m.name, tone: modelTone(m), issues: modelIssues(m), since: m.stateSince })),
     ...cronWorkflows.map((w) => ({
-      kind: 'batch' as const, namespace: w.namespace, name: w.name, tone: batchTone(w), issues: batchIssues(w),
+      kind: 'batch' as const, resourceKind: 'CronWorkflow', namespace: w.namespace, name: w.name, tone: batchTone(w), issues: batchIssues(w),
       since: w.lastRun?.finishedAt ?? w.lastRun?.startedAt,
     })),
   ], [models, cronWorkflows])

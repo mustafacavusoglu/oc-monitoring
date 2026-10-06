@@ -54,7 +54,10 @@ export type Model = {
   kind: string
   type: ModelType
   runtime?: string
-  image?: string
+  /** The named ServingRuntime does not exist in the namespace. */
+  runtimeMissing?: boolean
+  /** ServingRuntime (or LLMInferenceService) container images. */
+  images?: string[]
   modelFormat?: string
   storageUri?: string
   url?: string
@@ -95,8 +98,12 @@ export type Project = {
   pods: number
 }
 
+/** OpenShift console base URL and "group~version~Kind" refs per kind. */
+export type Console = { url: string; refs: Record<string, string> }
+
 export type DashboardResponse = {
   generatedAt: string
+  console: Console
   refreshIntervalSeconds: number
   sources: Sources
   namespaces: string[]

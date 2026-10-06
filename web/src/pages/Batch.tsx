@@ -12,6 +12,7 @@ import { RunHistory } from '../components/charts/RunHistory'
 import { Timeline } from '../components/charts/Timeline'
 import { formatDateTime, formatDuration, formatRelative, formatTime, matchesQuery } from '../lib/format'
 import { HEALTH_SERIES } from '../lib/chart'
+import { ConsoleLink } from '../lib/console'
 import { batchPhase, batchTone, statusInfo } from '../lib/status'
 import type { Navigate } from '../lib/useRoute'
 import type { CronWorkflow, ImageResult } from '../types'
@@ -42,7 +43,7 @@ const imageSummary = (images: ImageResult[]) =>
 const lastRunTime = (w: CronWorkflow) => w.lastRun?.startedAt ?? w.lastRun?.createdAt ?? w.lastScheduledAt
 
 const columns: Column<CronWorkflow>[] = [
-  { key: 'name', header: 'CronWorkflow', render: (w) => <NameCell name={w.name} namespace={w.namespace} />, sortValue: (w) => w.name },
+  { key: 'name', header: 'CronWorkflow', render: (w) => <NameCell name={w.name} namespace={w.namespace} kind="CronWorkflow" />, sortValue: (w) => w.name },
   {
     key: 'state', header: 'Durum', sortValue: (w) => batchPhase(w),
     render: (w) => <div className="stack"><StatusBadge value={batchPhase(w)} />{w.suspended ? <StatusBadge value="suspended" /> : null}</div>,
@@ -75,13 +76,13 @@ function WorkflowDetail({ workflow }: { workflow: CronWorkflow }) {
       <h3>Son workflow</h3>
       {run ? <>
         <DetailList items={[
-          ['Ad', run.name],
+          ['Ad', <>{run.name}<ConsoleLink kind="Workflow" namespace={workflow.namespace} name={run.name} /></>],
           ['Başlangıç', formatDateTime(run.startedAt ?? run.createdAt)],
           ['Bitiş', formatDateTime(run.finishedAt)],
           ['Süre', formatDuration(run.startedAt, run.finishedAt)],
         ]} />
         <h4>Pod’lar ({run.pods.length})</h4>
-        <PodList pods={run.pods} />
+        <PodList pods={run.pods} namespace={workflow.namespace} />
       </> : <p className="muted">Henüz workflow çalışmamış.</p>}
     </section>
     <section>

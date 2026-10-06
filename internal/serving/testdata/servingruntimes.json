@@ -15,6 +15,6 @@
     "apiVersion": "serving.kserve.io/v1alpha1",
     "kind": "ServingRuntime",
     "metadata": { "name": "ovms", "namespace": "fraud" },
-    "spec": { "containers": [{ "name": "kserve-container", "image": "quay.io/modh/openvino_model_server:2024.3" }] }
+    "spec": { "containers": [{ "name": "kserve-container", "image": "quay.io/modh/openvino_model_server:2024.3", "resources": { "limits": { "nvidia.com/gpu": "1" } } }] }
   }
 ]

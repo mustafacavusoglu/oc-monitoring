@@ -35,6 +35,8 @@ type Config struct {
 	Resources Resources
 
 	UIRefreshInterval time.Duration
+	// ConsoleURL is the OpenShift web console the UI links resources to.
+	ConsoleURL string
 }
 
 // ServingRules classifies KServe InferenceServices by their ServingRuntime image.
@@ -85,6 +87,7 @@ func Load() (Config, error) {
 			LLMInferenceServices: e.resource("LLM_INFERENCE_SERVICE_RESOURCE"),
 		},
 		UIRefreshInterval: e.duration("UI_REFRESH_INTERVAL"),
+		ConsoleURL:        strings.TrimRight(e.str("OPENSHIFT_CONSOLE_URL"), "/"),
 	}
 	for _, placeholder := range []string{"{namespace}", "{imageId}"} {
 		if cfg.NexusManifestURLTemplate != "" && !strings.Contains(cfg.NexusManifestURLTemplate, placeholder) {

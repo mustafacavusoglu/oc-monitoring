@@ -94,6 +94,7 @@ func (h *Handler) snapshot(ctx context.Context, now time.Time) model.DashboardRe
 
 	return model.DashboardResponse{
 		GeneratedAt:            now,
+		Console:                h.console(),
 		RefreshIntervalSeconds: int(h.cfg.UIRefreshInterval.Seconds()),
 		Sources: model.Sources{
 			Projects: projectHealth,
@@ -106,6 +107,20 @@ func (h *Handler) snapshot(ctx context.Context, now time.Time) model.DashboardRe
 		Models:        models,
 		CronWorkflows: cronWorkflows,
 	}
+}
+
+func (h *Handler) console() model.Console {
+	res := h.cfg.Resources
+	ref := func(gvr schema.GroupVersionResource, kind string) string {
+		return gvr.Group + "~" + gvr.Version + "~" + kind
+	}
+	return model.Console{URL: h.cfg.ConsoleURL, Refs: map[string]string{
+		"CronWorkflow":        ref(res.CronWorkflows, "CronWorkflow"),
+		"Workflow":            ref(res.Workflows, "Workflow"),
+		"InferenceService":    ref(res.InferenceServices, "InferenceService"),
+		"ServingRuntime":      ref(res.ServingRuntimes, "ServingRuntime"),
+		"LLMInferenceService": ref(res.LLMInferenceServices, "LLMInferenceService"),
+	}}
 }
 
 // coverage adds to every project what the cluster holds in its namespace, so

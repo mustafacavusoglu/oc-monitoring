@@ -29,6 +29,7 @@ var validEnv = map[string]string{
 	"SERVING_RUNTIME_RESOURCE":       "serving.kserve.io/v1alpha1/servingruntimes",
 	"LLM_INFERENCE_SERVICE_RESOURCE": "serving.kserve.io/v1alpha1/llminferenceservices",
 	"UI_REFRESH_INTERVAL":            "30s",
+	"OPENSHIFT_CONSOLE_URL":          "https://console.apps.example.test/",
 }
 
 func setEnv(t *testing.T, overrides map[string]string) {

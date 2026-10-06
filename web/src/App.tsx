@@ -3,6 +3,7 @@ import { SOURCE_LABELS, Sidebar, type NavItem } from './components/Sidebar'
 import { Topbar, type Theme } from './components/Topbar'
 import { batchIssues, modelIssues, projectGap } from './lib/status'
 import type { Sources } from './types'
+import { ConsoleContext } from './lib/console'
 import { useDashboard } from './lib/useDashboard'
 import { ALL_NAMESPACES, useRoute, type Page } from './lib/useRoute'
 import { Batch } from './pages/Batch'
@@ -70,7 +71,7 @@ export default function App() {
     setMenuOpen(false)
   }
 
-  return <div className="layout">
+  return <ConsoleContext.Provider value={data?.console ?? { url: '', refs: {} }}><div className="layout">
     <Sidebar items={navItems} page={page} sources={data?.sources} open={menuOpen} onNavigate={goTo} onClose={() => setMenuOpen(false)} />
     <div className="main">
       <Topbar {...PAGE_TEXT[page]} namespaces={data?.namespaces ?? []} namespace={namespace} onNamespace={(value) => navigate({ namespace: value })}
@@ -87,5 +88,5 @@ export default function App() {
           : <Models key={page} type={page} models={models.filter((m) => m.type === page)} namespace={namespace} filter={filter} navigate={navigate} />}
       </main>
     </div>
-  </div>
+  </div></ConsoleContext.Provider>
 }

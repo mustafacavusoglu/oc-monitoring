@@ -113,7 +113,7 @@ function buildModel([namespace, name, runtime, format, gpu, [min, max], state = 
     namespace, name, type,
     kind: isLLMISVC ? 'LLMInferenceService' : 'InferenceService',
     runtime: isLLMISVC ? undefined : runtime,
-    image: isLLMISVC ? 'ghcr.io/llm-d/llm-d:0.2.0' : type === 'llm' ? LLM_IMAGE : TRITON_IMAGE,
+    images: [isLLMISVC ? 'ghcr.io/llm-d/llm-d:0.2.0' : type === 'llm' ? LLM_IMAGE : TRITON_IMAGE],
     modelFormat: format,
     storageUri: isLLMISVC ? `hf://${format}` : `s3://mlops-models/${namespace}/${name}/v${(index % 4) + 1}`,
     url: `https://${name}-${namespace}.apps.ocp.example.local`,
@@ -229,7 +229,7 @@ export function createDemoDashboard(date: Date): DashboardResponse {
     ...LLMISVC_SEEDS.map((seed, i) => buildModel(seed, 'llm', i + LLM_SEEDS.length, now)),
     ...ML_SEEDS.map((seed, i) => buildModel(seed, 'ml', i, now)),
     ...CUSTOM_SEEDS.map((seed, i) => {
-      const model = { ...buildModel(seed, 'custom', i, now), image: `repomaster.company.com/mlops/${seed[2]}:1.${i}` }
+      const model = { ...buildModel(seed, 'custom', i, now), images: [`repomaster.company.com/mlops/${seed[2]}:1.${i}`] }
       return { ...model, pods: customPods(model, i, now) }
     }),
   ].sort((a, b) => a.namespace.localeCompare(b.namespace) || a.name.localeCompare(b.name))
@@ -252,6 +252,14 @@ export function createDemoDashboard(date: Date): DashboardResponse {
 
   return {
     generatedAt: iso(now),
+    console: {
+      url: 'https://console-openshift-console.apps.demo.example',
+      refs: {
+        CronWorkflow: 'argoproj.io~v1alpha1~CronWorkflow', Workflow: 'argoproj.io~v1alpha1~Workflow',
+        InferenceService: 'serving.kserve.io~v1beta1~InferenceService', ServingRuntime: 'serving.kserve.io~v1alpha1~ServingRuntime',
+        LLMInferenceService: 'serving.kserve.io~v1alpha1~LLMInferenceService',
+      },
+    },
     refreshIntervalSeconds: 30,
     sources: { projects: ok, cluster: ok, pods: ok, registry: { ...ok, lastSuccess: iso(now - 13 * MINUTE) } },
     namespaces: [...new Set([...models, ...cronWorkflows, ...projects].map((item) => item.namespace))].sort(),

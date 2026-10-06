@@ -84,21 +84,23 @@ type CronWorkflow struct {
 // Model is an online-serving deployment: a KServe InferenceService classified
 // by its ServingRuntime image, or an LLMInferenceService.
 type Model struct {
-	Namespace   string `json:"namespace"`
-	Name        string `json:"name"`
-	Kind        string `json:"kind"`
-	Type        string `json:"type"`
-	Runtime     string `json:"runtime,omitempty"`
-	Image       string `json:"image,omitempty"`
-	ModelFormat string `json:"modelFormat,omitempty"`
-	StorageURI  string `json:"storageUri,omitempty"`
-	URL         string `json:"url,omitempty"`
-	State       string `json:"state"`
-	Reason      string `json:"reason,omitempty"`
-	Message     string `json:"message,omitempty"`
-	MinReplicas *int64 `json:"minReplicas,omitempty"`
-	MaxReplicas *int64 `json:"maxReplicas,omitempty"`
-	GPU         int64  `json:"gpu"`
+	Namespace string `json:"namespace"`
+	Name      string `json:"name"`
+	Kind      string `json:"kind"`
+	Type      string `json:"type"`
+	Runtime   string `json:"runtime,omitempty"`
+	// RuntimeMissing means the named ServingRuntime does not exist in the namespace.
+	RuntimeMissing bool     `json:"runtimeMissing,omitempty"`
+	Images         []string `json:"images,omitempty"` // ServingRuntime (or LLMInferenceService) container images
+	ModelFormat    string   `json:"modelFormat,omitempty"`
+	StorageURI     string   `json:"storageUri,omitempty"`
+	URL            string   `json:"url,omitempty"`
+	State          string   `json:"state"`
+	Reason         string   `json:"reason,omitempty"`
+	Message        string   `json:"message,omitempty"`
+	MinReplicas    *int64   `json:"minReplicas,omitempty"`
+	MaxReplicas    *int64   `json:"maxReplicas,omitempty"`
+	GPU            int64    `json:"gpu"`
 	// MIG holds MIG slices per profile (e.g. "1g.5gb": 2), per replica.
 	MIG map[string]int64 `json:"mig,omitempty"`
 	// Pods of an InferenceService (label serving.kserve.io/inferenceservice).
@@ -132,8 +134,17 @@ type Project struct {
 	Pods              int  `json:"pods"`
 }
 
+// Console lets the UI link resources to the OpenShift web console:
+// {url}/k8s/ns/{namespace}/{refs[kind]}/{name}, where a ref is
+// "group~version~Kind".
+type Console struct {
+	URL  string            `json:"url"`
+	Refs map[string]string `json:"refs"`
+}
+
 type DashboardResponse struct {
 	GeneratedAt            time.Time      `json:"generatedAt"`
+	Console                Console        `json:"console"`
 	RefreshIntervalSeconds int            `json:"refreshIntervalSeconds"`
 	Sources                Sources        `json:"sources"`
 	Namespaces             []string       `json:"namespaces"`

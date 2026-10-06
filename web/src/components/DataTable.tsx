@@ -1,4 +1,5 @@
 import { Fragment, useMemo, useState, type ReactNode } from 'react'
+import { ConsoleLink } from '../lib/console'
 import { Icon } from './Icon'
 
 export type Column<T> = {
@@ -76,7 +77,10 @@ export function DataTable<T>({ rows, columns, rowKey, detail, empty, initialSort
   </div>
 }
 
-/** Primary cell: bold name with the namespace beneath. */
-export function NameCell({ name, namespace }: { name: string; namespace: string }) {
-  return <div className="name-cell"><strong>{name}</strong><small>{namespace}</small></div>
+/** Primary cell: bold name with the namespace beneath; with kind, a console link. */
+export function NameCell({ name, namespace, kind }: { name: string; namespace: string; kind?: string }) {
+  return <div className="name-cell">
+    <strong>{name}{kind ? <ConsoleLink kind={kind} namespace={namespace} name={kind === 'Project' ? undefined : name} /> : null}</strong>
+    <small>{namespace}</small>
+  </div>
 }

@@ -9,7 +9,7 @@ OpenShift üzerinde çalışan LLM modellerini, ML modellerini ve batch (Argo Cr
 | Custom Serve | `InferenceService`, `ServingRuntime`, pod | Runtime image’ı LLM veya ML anahtar kelimelerine uymayan (ya da runtime’ı bulunamayan) tüm `InferenceService`’ler. |
 | Batch modelleri | `CronWorkflow`, `Workflow`, pod | Cluster’daki **tüm** namespace’lerin CronWorkflow’ları, son Workflow’ları ve pod’ları. |
 
-Her şey OpenShift’ten okunur ve türler kaynaklardan çıkarılır; proje JSON’u yalnızca proje namespace’lerini verir. Her `InferenceService`’in pod’ları (`serving.kserve.io/inferenceservice` etiketi) hazır/restart bilgisiyle model satırında gösterilir.
+InferenceService, `spec.predictor.model.runtime` alanındaki adla aynı namespace’teki ServingRuntime’a bağlanır: türü runtime image’ı belirler, InferenceService GPU/MIG tanımlamıyorsa runtime container’larının kaynakları sayılır, adı verilen ServingRuntime yoksa model sorunlu görünür. Her şey OpenShift’ten okunur ve türler kaynaklardan çıkarılır; proje JSON’u yalnızca proje namespace’lerini verir. Her `InferenceService`’in pod’ları (`serving.kserve.io/inferenceservice` etiketi) hazır/restart bilgisiyle model satırında gösterilir.
 
 **Projeler** sayfası proje JSON’undaki her projeyi cluster’da bulunanlarla yan yana gösterir: namespace var mı, kaç CronWorkflow, InferenceService ve pod bulundu. Kaynağı eksik projeler en üstte listelenir; böylece dashboard’da görünmeyen bir projenin nedeni (namespace yok, kaynak yok) açıkça görülür. Okunamayan proje kayıtları (ör. JSON object olmayan değer veya aynı namespace’e dönüşen iki anahtar) tüm listeyi bozmaz; atlanır ve kaynak durumunda listelenir.
 
@@ -33,6 +33,7 @@ Ortama özgü bütün değerler `deploy/openshift.yaml` içindeki `mlops-dashboa
 | Anahtar | Açıklama |
 |---|---|
 | `HTTP_ADDR`, `WEB_DIR` | Dinlenen adres ve arayüz dosyalarının dizini (`/app/web`). |
+| `OPENSHIFT_CONSOLE_URL` | OpenShift web console adresi; kaynak adlarının yanındaki ↗ linkleri burada yeni sekmede açılır (`/k8s/ns/<namespace>/<group~version~Kind>/<ad>`). |
 | `UI_REFRESH_INTERVAL` | Arayüzün yenileme aralığı (ör. `30s`). |
 | `UPSTREAM_TIMEOUT` | Azure ve Nexus HTTP istek zaman aşımı. |
 | `AZURE_REPO_URL`, `AZURE_REPO_BRANCH`, `AZURE_PROJECTS_PATH` | Proje JSON’unun Azure Repos konumu. |
@@ -76,7 +77,7 @@ cd web && npm ci && npm run dev    # http://localhost:5173
 # Testler ve build
 go test ./... -count=1
 npm run build --prefix web
-docker buildx build --platform linux/amd64 -t mustafa12/monitor:0.0.29 --push .
+docker buildx build --platform linux/amd64 -t mustafa12/monitor:0.0.30 --push .
 ```
 
 `npm run dev`, Vite dev sunucusunda `/api/dashboard` isteğini `web/src/mock/demo.ts` içindeki deterministik dummy veriyle yanıtlar. Bu dosya yalnızca dev sunucusunda yüklenir, production bundle’a girmez.

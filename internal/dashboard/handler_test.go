@@ -99,6 +99,7 @@ func TestDashboardEndpointCombinesBatchAndModels(t *testing.T) {
 		Resources:         resources,
 		Serving:           config.ServingRules{LLMImageKeywords: []string{"vllm"}, MLImageKeywords: []string{"triton"}},
 		UIRefreshInterval: 30 * time.Second,
+		ConsoleURL:        "https://console.example.test",
 	})
 
 	req := httptest.NewRequest(http.MethodGet, "/api/dashboard", nil)
@@ -117,6 +118,9 @@ func TestDashboardEndpointCombinesBatchAndModels(t *testing.T) {
 		t.Fatal(err)
 	}
 
+	if got := response.Console.Refs["InferenceService"]; got != "serving.kserve.io~v1beta1~InferenceService" || response.Console.URL != "https://console.example.test" {
+		t.Fatalf("console = %+v", response.Console)
+	}
 	if response.RefreshIntervalSeconds != 30 {
 		t.Fatalf("refresh interval = %d, want 30", response.RefreshIntervalSeconds)
 	}

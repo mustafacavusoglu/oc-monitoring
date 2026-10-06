@@ -51,6 +51,7 @@ export const unhealthyPods = (model: Model) => (model.pods ?? []).filter((pod) =
 
 export function modelIssues(model: Model): string[] {
   const issues: string[] = []
+  if (model.runtimeMissing) issues.push(`ServingRuntime “${model.runtime}” bulunamadı`)
   if (model.state === 'NotReady') issues.push([model.reason, model.message].filter(Boolean).join(': ') || 'Hazır değil')
   const pods = unhealthyPods(model)
   if (pods) issues.push(`${pods} pod hazır değil`)

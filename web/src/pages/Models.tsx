@@ -9,6 +9,7 @@ import { SearchInput } from '../components/SearchInput'
 import { StatusBadge } from '../components/StatusBadge'
 import { StackedBars } from '../components/charts/StackedBars'
 import { HEALTH_SERIES, TYPE_SERIES, groupRows, namespacePick, namespaceSelection } from '../lib/chart'
+import { ConsoleLink } from '../lib/console'
 import { formatDateTime, formatRelative, matchesQuery } from '../lib/format'
 import { acceleratorLabel, allocatedGpu, allocatedMig, modelTone, unhealthyPods, usesAccelerator } from '../lib/status'
 import type { Navigate } from '../lib/useRoute'
@@ -47,12 +48,18 @@ const podsColumn: Column<Model> = {
 }
 
 const columns: Column<Model>[] = [
-  { key: 'name', header: 'Model', render: (m) => <NameCell name={m.name} namespace={m.namespace} />, sortValue: (m) => m.name },
+  { key: 'name', header: 'Model', render: (m) => <NameCell name={m.name} namespace={m.namespace} kind={m.kind} />, sortValue: (m) => m.name },
   {
     key: 'state', header: 'Durum', sortValue: (m) => m.state,
     render: (m) => <div className="stack"><StatusBadge value={m.state} title={m.message} />{m.state !== 'Ready' && m.reason ? <small className="muted">{m.reason}</small> : null}</div>,
   },
-  { key: 'runtime', header: 'Runtime', render: (m) => m.runtime || m.kind, sortValue: (m) => m.runtime || m.kind },
+  {
+    key: 'runtime', header: 'Runtime', sortValue: (m) => m.runtime || m.kind,
+    render: (m) => !m.runtime ? m.kind : <div className="stack">
+      <span>{m.runtime}{m.runtimeMissing ? null : <ConsoleLink kind="ServingRuntime" namespace={m.namespace} name={m.runtime} />}</span>
+      {m.runtimeMissing ? <small className="issue">ServingRuntime bulunamadı</small> : null}
+    </div>,
+  },
   { key: 'format', header: 'Model', render: (m) => <div className="stack"><span>{m.modelFormat || '—'}</span><small className="muted truncate" title={m.storageUri}>{m.storageUri}</small></div>, secondary: true },
   { key: 'replicas', header: 'Replika', render: replicas, sortValue: (m) => m.minReplicas ?? 1, secondary: true },
   { key: 'gpu', header: 'GPU / MIG', render: (m) => acceleratorLabel(m) || '—', sortValue: (m) => m.gpu * 100 + Object.values(m.mig ?? {}).reduce((sum, n) => sum + n, 0) },
@@ -62,8 +69,10 @@ const columns: Column<Model>[] = [
 function ModelDetail({ model }: { model: Model }) {
   const details = <DetailList items={[
     ['Kaynak türü', model.kind],
-    ['Runtime', model.runtime],
-    ['Runtime image', model.image && <code>{model.image}</code>],
+    ['ServingRuntime', model.runtime && <>{model.runtime}{model.runtimeMissing
+      ? <span className="issue"> — namespace’te bulunamadı</span>
+      : <ConsoleLink kind="ServingRuntime" namespace={model.namespace} name={model.runtime} />}</>],
+    ['Runtime image’ları', model.images?.length ? <div className="stack">{model.images.map((image) => <code key={image}>{image}</code>)}</div> : undefined],
     ['Model formatı', model.modelFormat],
     ['Storage URI', model.storageUri && <code>{model.storageUri}</code>],
     ['Endpoint', model.url && <a href={model.url} target="_blank" rel="noreferrer"><code>{model.url}</code></a>],
@@ -75,7 +84,7 @@ function ModelDetail({ model }: { model: Model }) {
   if (!model.pods) return details
   return <div className="detail-grid detail-grid-2">
     <section><h3>Model</h3>{details}</section>
-    <section><h3>Pod’lar ({model.pods.length})</h3><PodList pods={model.pods} /></section>
+    <section><h3>Pod’lar ({model.pods.length})</h3><PodList pods={model.pods} namespace={model.namespace} /></section>
   </div>
 }
 

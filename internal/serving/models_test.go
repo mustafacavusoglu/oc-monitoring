@@ -35,7 +35,7 @@ func TestBuildModelsClassifiesByRuntimeImage(t *testing.T) {
 	if llama.Type != model.TypeLLM || llama.State != model.ModelReady || llama.GPU != 2 || *llama.MinReplicas != 1 || *llama.MaxReplicas != 3 {
 		t.Fatalf("llama-chat = %+v", llama)
 	}
-	if llama.Image != "quay.io/modh/vllm:rhoai-2.19" || llama.URL == "" || llama.StorageURI != "s3://models/llama-3-8b" {
+	if len(llama.Images) != 1 || llama.Images[0] != "quay.io/modh/vllm:rhoai-2.19" || llama.URL == "" || llama.StorageURI != "s3://models/llama-3-8b" {
 		t.Fatalf("llama-chat details = %+v", llama)
 	}
 
@@ -74,6 +74,13 @@ func TestBuildModelsTreatsOtherRuntimesAsCustomServeWithPods(t *testing.T) {
 	got := make(map[string]model.Model, len(models))
 	for _, m := range models {
 		got[m.Name] = m
+	}
+	if !got["dangling-runtime"].RuntimeMissing || got["openvino-model"].RuntimeMissing {
+		t.Fatalf("runtime missing = dangling %v / openvino %v, want true / false", got["dangling-runtime"].RuntimeMissing, got["openvino-model"].RuntimeMissing)
+	}
+	// The InferenceService sets no GPU, so the ServingRuntime container's limit counts.
+	if got["openvino-model"].GPU != 1 {
+		t.Fatalf("openvino-model GPU = %d, want 1 from its ServingRuntime", got["openvino-model"].GPU)
 	}
 	// OpenVINO matches no keyword and the dangling runtime has no image.
 	for _, name := range []string{"openvino-model", "dangling-runtime"} {

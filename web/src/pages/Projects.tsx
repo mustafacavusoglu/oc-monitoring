@@ -19,7 +19,7 @@ const FILTERS: Record<string, { label: string; match: (project: Project) => bool
 const count = (value: number) => value || <span className="muted">0</span>
 
 const columns: Column<Project>[] = [
-  { key: 'key', header: 'Proje', render: (p) => <NameCell name={p.key} namespace={p.namespace} />, sortValue: (p) => p.key },
+  { key: 'key', header: 'Proje', render: (p) => <NameCell name={p.key} namespace={p.namespace} kind={p.namespaceExists ? 'Project' : undefined} />, sortValue: (p) => p.key },
   {
     key: 'gap', header: 'Durum', sortValue: (p) => (projectGap(p) ? 0 : 1),
     render: (p) => projectGap(p) ? <span className="badge tone-critical"><span aria-hidden="true">✕</span>{projectGap(p)}</span>

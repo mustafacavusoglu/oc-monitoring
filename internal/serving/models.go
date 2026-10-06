@@ -23,9 +23,9 @@ import (
 const inferenceServiceLabel = "serving.kserve.io/inferenceservice"
 
 func BuildModels(inferenceServices, servingRuntimes, llmInferenceServices, pods []*unstructured.Unstructured, rules config.ServingRules) []model.Model {
-	runtimes := make(map[string][]string, len(servingRuntimes))
+	runtimes := make(map[string]*unstructured.Unstructured, len(servingRuntimes))
 	for _, runtime := range servingRuntimes {
-		runtimes[cluster.Key(runtime.GetNamespace(), runtime.GetName())] = containerImages(runtime.Object, "spec", "containers")
+		runtimes[cluster.Key(runtime.GetNamespace(), runtime.GetName())] = runtime
 	}
 	podsByModel := make(map[string][]*unstructured.Unstructured)
 	for _, pod := range pods {
@@ -37,9 +37,7 @@ func BuildModels(inferenceServices, servingRuntimes, llmInferenceServices, pods 
 
 	models := make([]model.Model, 0, len(inferenceServices)+len(llmInferenceServices))
 	for _, isvc := range inferenceServices {
-		runtimeName, _, _ := unstructured.NestedString(isvc.Object, "spec", "predictor", "model", "runtime")
-		images := runtimes[cluster.Key(isvc.GetNamespace(), runtimeName)]
-		m := inferenceServiceModel(isvc, classify(images, rules), runtimeName, images, rules)
+		m := inferenceServiceModel(isvc, runtimes, rules)
 		m.Pods = podViews(podsByModel[cluster.Key(m.Namespace, m.Name)])
 		models = append(models, m)
 	}
@@ -64,21 +62,40 @@ func podViews(pods []*unstructured.Unstructured) []model.Pod {
 	return views
 }
 
-func inferenceServiceModel(isvc *unstructured.Unstructured, modelType, runtimeName string, images []string, rules config.ServingRules) model.Model {
-	m := baseModel(isvc, modelType)
+// inferenceServiceModel joins an InferenceService with the ServingRuntime its
+// spec.predictor.model.runtime names: the runtime's images decide the type, and
+// its container resources are used when the InferenceService sets no GPU/MIG.
+func inferenceServiceModel(isvc *unstructured.Unstructured, runtimes map[string]*unstructured.Unstructured, rules config.ServingRules) model.Model {
+	runtimeName, _, _ := unstructured.NestedString(isvc.Object, "spec", "predictor", "model", "runtime")
+	runtime := runtimes[cluster.Key(isvc.GetNamespace(), runtimeName)]
+	var images []string
+	if runtime != nil {
+		images = containerImages(runtime.Object, "spec", "containers")
+	}
+	m := baseModel(isvc, classify(images, rules))
 	m.Runtime = runtimeName
-	m.Image = first(images)
+	m.RuntimeMissing = runtimeName != "" && runtime == nil
+	m.Images = images
 	m.ModelFormat, _, _ = unstructured.NestedString(isvc.Object, "spec", "predictor", "model", "modelFormat", "name")
 	m.StorageURI, _, _ = unstructured.NestedString(isvc.Object, "spec", "predictor", "model", "storageUri")
 	m.MinReplicas = cluster.NestedInt(isvc.Object, "spec", "predictor", "minReplicas")
 	m.MaxReplicas = cluster.NestedInt(isvc.Object, "spec", "predictor", "maxReplicas")
 	addAccelerators(&m, isvc.Object, rules, "spec", "predictor", "model", "resources")
+	if runtime != nil && m.GPU == 0 && len(m.MIG) == 0 {
+		containers, _, _ := unstructured.NestedFieldNoCopy(runtime.Object, "spec", "containers")
+		items, _ := containers.([]any)
+		for _, item := range items {
+			if container, ok := item.(map[string]any); ok {
+				addAccelerators(&m, container, rules, "resources")
+			}
+		}
+	}
 	return m
 }
 
 func llmInferenceServiceModel(llmisvc *unstructured.Unstructured, rules config.ServingRules) model.Model {
 	m := baseModel(llmisvc, model.TypeLLM)
-	m.Image = first(containerImages(llmisvc.Object, "spec", "template", "containers"))
+	m.Images = containerImages(llmisvc.Object, "spec", "template", "containers")
 	m.ModelFormat, _, _ = unstructured.NestedString(llmisvc.Object, "spec", "model", "name")
 	m.StorageURI, _, _ = unstructured.NestedString(llmisvc.Object, "spec", "model", "uri")
 	m.MinReplicas = cluster.NestedInt(llmisvc.Object, "spec", "replicas")
@@ -192,11 +209,4 @@ func resourceCounts(object map[string]any, resourcesPath []string) map[string]in
 		}
 	}
 	return counts
-}
-
-func first(values []string) string {
-	if len(values) == 0 {
-		return ""
-	}
-	return values[0]
 }
