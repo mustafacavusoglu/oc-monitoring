@@ -1,6 +1,6 @@
 # Deploy into the existing mlops-development project:
 #   oc apply -f deploy/openshift.yaml
-# Every environment-specific value lives in the ConfigMap below; the binary has
+# Every environment-specific value lives in the ConfigMap below; the app has
 # no built-in defaults and refuses to start if a key is missing.
 apiVersion: v1
 kind: ConfigMap
@@ -131,7 +131,7 @@ spec:
           type: RuntimeDefault
       containers:
         - name: dashboard
-          image: mustafa12/monitor:0.0.30
+          image: mustafa12/monitor-python:0.0.1
           imagePullPolicy: IfNotPresent
           envFrom:
             - configMapRef:

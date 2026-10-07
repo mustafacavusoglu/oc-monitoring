@@ -19,6 +19,9 @@ Genel bakış sayfası tüm türlerin sayılarını, namespace dağılımını, 
 
 ## Performans
 
+- Backend free-threaded (GIL’siz) CPython 3.14t ile çalışır (`PYTHON_GIL=0`); HTTP istekleri ve her informer’ın watch thread’i gerçekten paralel koşar. Açılış logunda `GIL disabled` görünür. Bağımlılıklar saf Python’dur (yalnızca `croniter`), bu yüzden hiçbir C eklentisi GIL’i geri açmaz.
+- Kubernetes client kütüphanesi kullanılmaz: list+watch doğrudan REST ile yapılır, nesneler JSON’dan çözülen dict’ler olarak bellekte tutulur.
+- `/api/dashboard` yanıtı en fazla saniyede bir üretilir; aynı saniyedeki istekler hazır JSON/gzip baytlarını paylaşır. Cron “sonraki çalışma” hesapları dakika bazında cache’lenir.
 - Kubernetes verisi informer cache’inden okunur; tarayıcı isteği hiçbir zaman Kubernetes, Azure veya Nexus’u beklemez.
 - CronWorkflow, Workflow, InferenceService, ServingRuntime, LLMInferenceService ve Namespace kaynakları cluster genelinde kaynak başına tek watch ile izlenir ve projelere bellekte filtrelenir. Yalnızca pod’lar proje namespace’lerinde ayrı ayrı izlenir.
 - Cache’e alınan nesnelerden `managedFields` ve `last-applied-configuration` atılır; nesneler kopyalanmadan okunur.
@@ -68,16 +71,17 @@ CronWorkflow spec’indeki her `image:` alanı okunur (container, script, sideca
 
 ## Geliştirme
 
-Go 1.24 ve Node.js 22 gerekir.
+Free-threaded Python 3.14 (`3.14t`) ve Node.js 22 gerekir.
 
 ```sh
 # Arayüzü dummy verilerle çalıştırma (backend gerekmez)
 cd web && npm ci && npm run dev    # http://localhost:5173
 
 # Testler ve build
-go test ./... -count=1
+uv venv -p 3.14t .venv && uv pip install -p .venv -r requirements.txt
+.venv/bin/python -m unittest -v
 npm run build --prefix web
-docker buildx build --platform linux/amd64 -t mustafa12/monitor:0.0.30 --push .
+docker buildx build --platform linux/amd64 -t mustafa12/monitor-python:0.0.1 --push .
 ```
 
 `npm run dev`, Vite dev sunucusunda `/api/dashboard` isteğini `web/src/mock/demo.ts` içindeki deterministik dummy veriyle yanıtlar. Bu dosya yalnızca dev sunucusunda yüklenir, production bundle’a girmez.
@@ -86,13 +90,14 @@ Kod yapısı:
 
 | Paket | Görev |
 |---|---|
-| `internal/config` | ConfigMap’ten gelen ortam değişkenlerini okur ve doğrular. |
-| `internal/cluster` | Değişen namespace kümesi için genel informer watcher’ı. |
-| `internal/projects` | Azure Repos’tan proje JSON’unu okuyup batch namespace’lerini seçer. |
-| `internal/batch` | CronWorkflow satırlarını, çalışma geçmişini ve image kontrollerini üretir. |
-| `internal/serving` | InferenceService/LLMInferenceService’leri LLM/ML/Custom Serve olarak sınıflandırır. |
-| `internal/registry` | Nexus manifest kontrolü ve TTL cache. |
-| `internal/dashboard` | Tek JSON uç noktası: `GET /api/dashboard`. |
+| `monitor/server.py` | Giriş noktası (`python -m monitor.server`); API, `/healthz` ve arayüz dosyalarını sunar. |
+| `monitor/config.py` | ConfigMap’ten gelen ortam değişkenlerini okur ve doğrular. |
+| `monitor/kube.py` | In-cluster REST client, list+watch informer’ları ve değişen namespace kümesi için watcher. |
+| `monitor/projects.py` | Azure Repos’tan proje JSON’unu okuyup proje namespace’lerini çıkarır. |
+| `monitor/batch.py` | CronWorkflow satırlarını, çalışma geçmişini ve image kontrollerini üretir. |
+| `monitor/serving.py` | InferenceService/LLMInferenceService’leri LLM/ML/Custom Serve olarak sınıflandırır. |
+| `monitor/registry.py` | Nexus manifest kontrolü ve TTL cache. |
+| `monitor/dashboard.py` | Tek JSON uç noktası: `GET /api/dashboard`. |
 | `web/src` | React arayüzü: `pages/` (sayfalar), `components/` (tablo, KPI, grafikler), `lib/` (durum, format, polling, routing). |
 
 ## OpenShift kurulumu
